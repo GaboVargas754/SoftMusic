@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -25,13 +26,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
@@ -89,6 +94,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -96,6 +102,7 @@ import androidx.compose.ui.window.ApplicationScope
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import androidx.compose.material3.AlertDialog
 import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.Song
 import com.softmusic.app.desktop.data.DesktopMusicScanner
@@ -115,7 +122,10 @@ import org.jetbrains.skia.Image as SkiaImage
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
+import java.text.DateFormat
 import java.text.Normalizer
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 import javax.swing.JFileChooser
 import kotlin.math.min
@@ -480,6 +490,41 @@ private fun ApplicationScope.DesktopApp() {
 
     fun queueSongs(): List<Song> = activeQueue.ifEmpty { displayedSongs.ifEmpty { songs } }
 
+    fun queueSongNext(song: Song) {
+        val current = currentSong ?: run {
+            playSong(song, listOf(song))
+            return
+        }
+        if (song.id == current.id) return
+
+        val queue = queueSongs()
+            .ifEmpty { listOf(current) }
+            .let { currentQueue ->
+                if (currentQueue.any { it.id == current.id }) currentQueue else listOf(current) + currentQueue
+            }
+            .filterNot { it.id == song.id }
+        val currentIndex = queue.indexOfFirst { it.id == current.id }.coerceAtLeast(0)
+        activeQueue = queue.toMutableList().apply {
+            add((currentIndex + 1).coerceIn(0, size), song)
+        }
+    }
+
+    fun queueSongAtEnd(song: Song) {
+        val current = currentSong ?: run {
+            playSong(song, listOf(song))
+            return
+        }
+        if (song.id == current.id) return
+
+        val queue = queueSongs()
+            .ifEmpty { listOf(current) }
+            .let { currentQueue ->
+                if (currentQueue.any { it.id == current.id }) currentQueue else listOf(current) + currentQueue
+            }
+            .filterNot { it.id == song.id }
+        activeQueue = queue + song
+    }
+
     fun stopPlayback() {
         audioPlayer.stop()
         currentSong = null
@@ -755,6 +800,8 @@ private fun ApplicationScope.DesktopApp() {
                                     playSong(song, musicPlaybackSongs.groupQueueFor(desktopSettings.libraryView, song))
                             },
                             onToggleFavorite = ::toggleFavorite,
+                            onPlayNext = ::queueSongNext,
+                            onPlayAtEnd = ::queueSongAtEnd,
                             onAddSongToPlaylist = ::addSongToPlaylist,
                             onRemoveSongFromPlaylist = {},
                         )
@@ -788,6 +835,8 @@ private fun ApplicationScope.DesktopApp() {
                                 playSong(song, favoritePlaybackSongs)
                             },
                             onToggleFavorite = ::toggleFavorite,
+                            onPlayNext = ::queueSongNext,
+                            onPlayAtEnd = ::queueSongAtEnd,
                             onAddSongToPlaylist = ::addSongToPlaylist,
                             onRemoveSongFromPlaylist = {},
                         )
@@ -810,6 +859,8 @@ private fun ApplicationScope.DesktopApp() {
                             },
                             onPlaySong = { song -> playSong(song, selectedPlaylistSongs) },
                             onToggleFavorite = ::toggleFavorite,
+                            onPlayNext = ::queueSongNext,
+                            onPlayAtEnd = ::queueSongAtEnd,
                             onAddSongToPlaylist = ::addSongToPlaylist,
                             onRemoveSongFromPlaylist = { songId ->
                                 selectedPlaylistId?.let { playlistId -> removeSongFromPlaylist(playlistId, songId) }
@@ -830,6 +881,7 @@ private fun ApplicationScope.DesktopApp() {
                 player = {
                     PlayerBar(
                     currentSong = currentSong,
+                    playbackQueue = activeQueue,
                     isPlaying = isPlaying,
                     positionMs = positionMs,
                     durationMs = durationMs.takeIf { it > 0L } ?: currentSong?.durationMs ?: 0L,
@@ -1268,6 +1320,8 @@ private fun LibrarySectionWindowContent(
     onPlaySong: (Song) -> Unit,
     onPlaySongGroup: (Song, List<Song>) -> Unit,
     onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
     onAddSongToPlaylist: (String, Long) -> Unit,
     onRemoveSongFromPlaylist: (Long) -> Unit,
 ) {
@@ -1324,6 +1378,8 @@ private fun LibrarySectionWindowContent(
             onPlaySong = onPlaySong,
             onPlaySongGroup = onPlaySongGroup,
             onToggleFavorite = onToggleFavorite,
+            onPlayNext = onPlayNext,
+            onPlayAtEnd = onPlayAtEnd,
             onAddSongToPlaylist = onAddSongToPlaylist,
             onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
         )
@@ -1497,6 +1553,8 @@ private fun PlaylistsWindowContent(
     onAddCurrentSongToPlaylist: (String) -> Unit,
     onPlaySong: (Song) -> Unit,
     onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
     onAddSongToPlaylist: (String, Long) -> Unit,
     onRemoveSongFromPlaylist: (Long) -> Unit,
 ) {
@@ -1687,6 +1745,8 @@ private fun PlaylistsWindowContent(
                             onPlaySong = onPlaySong,
                             onPlaySongGroup = { song, _ -> onPlaySong(song) },
                             onToggleFavorite = onToggleFavorite,
+                            onPlayNext = onPlayNext,
+                            onPlayAtEnd = onPlayAtEnd,
                             onAddSongToPlaylist = onAddSongToPlaylist,
                             onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
                         )
@@ -2005,6 +2065,8 @@ private fun LibraryContent(
     onPlaySong: (Song) -> Unit,
     onPlaySongGroup: (Song, List<Song>) -> Unit,
     onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
     onAddSongToPlaylist: (String, Long) -> Unit,
     onRemoveSongFromPlaylist: (Long) -> Unit,
 ) {
@@ -2027,6 +2089,8 @@ private fun LibraryContent(
                     showArtwork = showArtwork,
                     onPlaySong = onPlaySong,
                     onToggleFavorite = onToggleFavorite,
+                    onPlayNext = onPlayNext,
+                    onPlayAtEnd = onPlayAtEnd,
                     onAddSongToPlaylist = onAddSongToPlaylist,
                     onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
                 )
@@ -2047,6 +2111,8 @@ private fun LibraryContent(
                             onPlaySong = { song -> onPlaySongGroup(song, selectedGroup.songs) },
                             onPlaySongGroup = { onPlaySongGroup(selectedGroup.songs.first(), selectedGroup.songs) },
                             onToggleFavorite = onToggleFavorite,
+                            onPlayNext = onPlayNext,
+                            onPlayAtEnd = onPlayAtEnd,
                             onAddSongToPlaylist = onAddSongToPlaylist,
                             onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
                         )
@@ -2178,6 +2244,8 @@ private fun GroupSongsContent(
     onPlaySong: (Song) -> Unit,
     onPlaySongGroup: () -> Unit,
     onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
     onAddSongToPlaylist: (String, Long) -> Unit,
     onRemoveSongFromPlaylist: (Long) -> Unit,
 ) {
@@ -2238,6 +2306,8 @@ private fun GroupSongsContent(
             showArtwork = showArtwork,
             onPlaySong = onPlaySong,
             onToggleFavorite = onToggleFavorite,
+            onPlayNext = onPlayNext,
+            onPlayAtEnd = onPlayAtEnd,
             onAddSongToPlaylist = onAddSongToPlaylist,
             onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
         )
@@ -2358,6 +2428,8 @@ private fun SongList(
     showArtwork: Boolean,
     onPlaySong: (Song) -> Unit,
     onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
     onAddSongToPlaylist: (String, Long) -> Unit,
     onRemoveSongFromPlaylist: (Long) -> Unit,
 ) {
@@ -2382,7 +2454,7 @@ private fun SongList(
                 style = MaterialTheme.typography.labelLarge,
             )
             Text(
-                modifier = Modifier.width(148.dp),
+                modifier = Modifier.width(196.dp),
                 text = "Acciones",
                 color = colors.muted,
                 style = MaterialTheme.typography.labelLarge,
@@ -2406,6 +2478,8 @@ private fun SongList(
                     showArtwork = showArtwork,
                     onPlaySong = onPlaySong,
                     onToggleFavorite = onToggleFavorite,
+                    onPlayNext = onPlayNext,
+                    onPlayAtEnd = onPlayAtEnd,
                     onAddSongToPlaylist = onAddSongToPlaylist,
                     onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
                 )
@@ -2424,6 +2498,8 @@ private fun SongRow(
     showArtwork: Boolean,
     onPlaySong: (Song) -> Unit,
     onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
     onAddSongToPlaylist: (String, Long) -> Unit,
     onRemoveSongFromPlaylist: (Long) -> Unit,
 ) {
@@ -2474,7 +2550,7 @@ private fun SongRow(
                 )
             }
             Row(
-                modifier = Modifier.width(148.dp),
+                modifier = Modifier.width(196.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -2489,6 +2565,17 @@ private fun SongRow(
                     song = song,
                     playlists = playlists,
                     onAddSongToPlaylist = onAddSongToPlaylist,
+                )
+                SongActionsButton(
+                    song = song,
+                    isFavorite = isFavorite,
+                    playlists = playlists,
+                    selectedPlaylist = selectedPlaylist,
+                    onToggleFavorite = onToggleFavorite,
+                    onPlayNext = onPlayNext,
+                    onPlayAtEnd = onPlayAtEnd,
+                    onAddSongToPlaylist = onAddSongToPlaylist,
+                    onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
                 )
                 if (selectedPlaylist != null) {
                     IconButton(onClick = { onRemoveSongFromPlaylist(song.id) }) {
@@ -2508,6 +2595,115 @@ private fun SongRow(
             )
         }
         HorizontalDivider(color = colors.divider)
+    }
+}
+
+@Composable
+private fun SongActionsButton(
+    song: Song,
+    isFavorite: Boolean,
+    playlists: List<MusicPlaylist>,
+    selectedPlaylist: MusicPlaylist?,
+    onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
+    onAddSongToPlaylist: (String, Long) -> Unit,
+    onRemoveSongFromPlaylist: (Long) -> Unit,
+) {
+    val colors = LocalDesktopColors.current
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(
+                imageVector = Icons.Filled.MoreVert,
+                contentDescription = "Más opciones de ${song.title}",
+                tint = colors.muted,
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Reproducir después") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.SkipNext,
+                        contentDescription = null,
+                    )
+                },
+                onClick = {
+                    onPlayNext(song)
+                    expanded = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Reproducir al final") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.FormatListNumbered,
+                        contentDescription = null,
+                    )
+                },
+                onClick = {
+                    onPlayAtEnd(song)
+                    expanded = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(if (isFavorite) "Quitar de favoritos" else "Agregar a favoritos") },
+                leadingIcon = {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+                        contentDescription = null,
+                    )
+                },
+                onClick = {
+                    onToggleFavorite(song.id)
+                    expanded = false
+                },
+            )
+            if (playlists.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("Crea una playlist primero") },
+                    enabled = false,
+                    onClick = {},
+                )
+            } else {
+                playlists.forEach { playlist ->
+                    val alreadyAdded = song.id in playlist.songIds
+                    DropdownMenuItem(
+                        text = { Text(if (alreadyAdded) "${playlist.name} (agregada)" else "Agregar a ${playlist.name}") },
+                        enabled = !alreadyAdded,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            onAddSongToPlaylist(playlist.id, song.id)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+            if (selectedPlaylist != null) {
+                DropdownMenuItem(
+                    text = { Text("Quitar de ${selectedPlaylist.name}") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.Delete,
+                            contentDescription = null,
+                        )
+                    },
+                    onClick = {
+                        onRemoveSongFromPlaylist(song.id)
+                        expanded = false
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -2617,6 +2813,7 @@ private fun SongArtwork(
 @Composable
 private fun PlayerBar(
     currentSong: Song?,
+    playbackQueue: List<Song>,
     isPlaying: Boolean,
     positionMs: Long,
     durationMs: Long,
@@ -2631,11 +2828,29 @@ private fun PlayerBar(
     onSeek: (Long) -> Unit,
 ) {
     val colors = LocalDesktopColors.current
+    var showSongDetails by remember(currentSong?.id) { mutableStateOf(false) }
+    var showPlaybackQueue by remember(currentSong?.id) { mutableStateOf(false) }
     val volumeWarning = currentSong != null && volumePercent == 0
     val statusMessage = playbackErrorMessage
         ?: if (volumeWarning) "El volumen está en 0%" else currentSong?.displayPlaybackSubtitle()
         ?: "Selecciona una canción de la biblioteca"
     val hasPlaybackWarning = playbackErrorMessage != null || volumeWarning
+
+    if (showSongDetails && currentSong != null) {
+        SongDetailsDialog(
+            song = currentSong,
+            onDismiss = { showSongDetails = false },
+        )
+    }
+
+    if (showPlaybackQueue) {
+        PlaybackQueueDialog(
+            queue = playbackQueue.ifEmpty { currentSong?.let(::listOf).orEmpty() },
+            currentSong = currentSong,
+            onDismiss = { showPlaybackQueue = false },
+        )
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -2684,6 +2899,19 @@ private fun PlayerBar(
             ) {
                 IconButton(
                     modifier = Modifier.size(48.dp),
+                    onClick = { showSongDetails = true },
+                    enabled = currentSong != null,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Info,
+                        contentDescription = "Ver detalles de la canción",
+                        tint = if (currentSong != null) colors.text else colors.subtle.copy(alpha = 0.55f),
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                IconButton(
+                    modifier = Modifier.size(48.dp),
                     onClick = onPrevious,
                     enabled = currentSong != null,
                 ) {
@@ -2718,6 +2946,19 @@ private fun PlayerBar(
                         contentDescription = "Siguiente",
                         tint = if (currentSong != null) colors.text else colors.subtle.copy(alpha = 0.55f),
                         modifier = Modifier.size(28.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                IconButton(
+                    modifier = Modifier.size(48.dp),
+                    onClick = { showPlaybackQueue = true },
+                    enabled = currentSong != null || playbackQueue.isNotEmpty(),
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                        contentDescription = "Ver cola de reproducción",
+                        tint = if (currentSong != null || playbackQueue.isNotEmpty()) colors.text else colors.subtle.copy(alpha = 0.55f),
+                        modifier = Modifier.size(26.dp),
                     )
                 }
             }
@@ -2774,6 +3015,154 @@ private fun PlayerBar(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SongDetailsDialog(
+    song: Song,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Detalles de la canción") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SongDetailItem(label = "Título", value = song.title)
+                SongDetailItem(label = "Artista", value = song.artist)
+                SongDetailItem(label = "Álbum", value = song.album)
+                SongDetailItem(label = "Duración", value = "${song.durationMs.formatSongDuration()} (${song.durationMs.coerceAtLeast(0)} ms)")
+                SongDetailItem(label = "Fecha agregada", value = song.dateAddedSeconds.formatDateAdded())
+                SongDetailItem(label = "Carpeta", value = song.folderName)
+                SongDetailItem(label = "Ruta de carpeta", value = song.folderPath)
+                SongDetailItem(label = "URI de archivo", value = song.uri)
+                SongDetailItem(label = "URI de carátula", value = song.artworkUri ?: "No disponible")
+                SongDetailItem(label = "ID", value = song.id.toString())
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        },
+    )
+}
+
+@Composable
+private fun SongDetailItem(
+    label: String,
+    value: String,
+) {
+    val colors = LocalDesktopColors.current
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            color = colors.subtle,
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Text(
+            text = value.ifBlank { "No disponible" },
+            color = colors.text,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@Composable
+private fun PlaybackQueueDialog(
+    queue: List<Song>,
+    currentSong: Song?,
+    onDismiss: () -> Unit,
+) {
+    val colors = LocalDesktopColors.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Cola de reproducción") },
+        text = {
+            if (queue.isEmpty()) {
+                Text(
+                    text = "No hay canciones en cola.",
+                    color = colors.muted,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = if (queue.size == 1) "1 canción" else "${queue.size} canciones",
+                        color = colors.muted,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(380.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        itemsIndexed(
+                            items = queue,
+                            key = { index, song -> "${song.id}-$index" },
+                        ) { index, song ->
+                            PlaybackQueueItem(
+                                index = index + 1,
+                                song = song,
+                                isCurrent = song.id == currentSong?.id,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        },
+    )
+}
+
+@Composable
+private fun PlaybackQueueItem(
+    index: Int,
+    song: Song,
+    isCurrent: Boolean,
+) {
+    val colors = LocalDesktopColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (isCurrent) colors.highlight else Color.Transparent)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            modifier = Modifier.width(32.dp),
+            text = index.toString(),
+            color = if (isCurrent) colors.accent else colors.subtle,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                color = if (isCurrent) colors.accent else colors.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal),
+            )
+            Text(
+                text = song.artist,
+                color = colors.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Text(
+            text = song.durationMs.formatSongDuration(),
+            color = colors.subtle,
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 
@@ -2963,6 +3352,12 @@ private fun Long.formatSongDuration(): String = if (this > 0L) {
     formatPlaybackTime()
 } else {
     "--:--"
+}
+
+private fun Long.formatDateAdded(): String {
+    if (this <= 0L) return "No disponible"
+    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, Locale.getDefault())
+        .format(Date(this * 1_000L))
 }
 
 private fun Song.displayPlaybackSubtitle(): String {

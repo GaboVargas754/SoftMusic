@@ -1,6 +1,6 @@
 # Maintainer: SoftMusic local package
 pkgname=softmusic
-pkgver=1.1.0
+pkgver=1.1.1
 pkgrel=1
 pkgdesc="Reproductor de musica local offline con Compose Desktop"
 arch=('x86_64')
