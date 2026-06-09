@@ -69,8 +69,8 @@ class MusicRepository {
                     dateAddedSeconds = cursor.getLong(dateAddedColumn),
                     folderPath = folder.path,
                     folderName = folder.name,
-                    uri = contentUri,
-                    artworkUri = artworkUri,
+                    uri = contentUri.toString(),
+                    artworkUri = artworkUri?.toString(),
                 )
             }
         }

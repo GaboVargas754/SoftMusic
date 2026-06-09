@@ -1,7 +1,5 @@
 package com.softmusic.app.data
 
-import android.net.Uri
-
 data class Song(
     val id: Long,
     val title: String,
@@ -11,6 +9,6 @@ data class Song(
     val dateAddedSeconds: Long,
     val folderPath: String,
     val folderName: String,
-    val uri: Uri,
-    val artworkUri: Uri?,
+    val uri: String,
+    val artworkUri: String?,
 )

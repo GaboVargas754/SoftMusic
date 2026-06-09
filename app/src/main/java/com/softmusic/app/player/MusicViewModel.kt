@@ -3,6 +3,7 @@ package com.softmusic.app.player
 import android.app.Application
 import android.content.ComponentName
 import android.content.Context
+import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -890,13 +891,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun Song.toMediaItem(): MediaItem = MediaItem.Builder()
         .setMediaId(id.toString())
-        .setUri(uri)
+        .setUri(Uri.parse(uri))
         .setMediaMetadata(
             MediaMetadata.Builder()
                 .setTitle(title)
                 .setArtist(artist)
                 .setAlbumTitle(album)
-                .setArtworkUri(artworkUri)
+                .setArtworkUri(artworkUri?.let(Uri::parse))
                 .build(),
         )
         .build()

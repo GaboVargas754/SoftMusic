@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoubleArrow
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -120,7 +121,9 @@ import com.softmusic.app.ui.theme.AppColorPalette
 import com.softmusic.app.ui.theme.AppThemeMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import java.text.DateFormat
 import java.text.Normalizer
+import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 
@@ -3223,6 +3226,15 @@ private fun MiniPlayer(
     val song = uiState.currentSong ?: return
     val playbackProgress by playbackProgressState.collectAsStateWithLifecycle()
     val highPerformanceMode = LocalHighPerformanceMode.current
+    var showSongDetails by rememberSaveable(song.id) { mutableStateOf(false) }
+
+    if (showSongDetails) {
+        SongDetailsDialog(
+            song = song,
+            onDismiss = { showSongDetails = false },
+        )
+    }
+
     Surface(
         color = if (highPerformanceMode) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
         shadowElevation = if (highPerformanceMode) 0.dp else 18.dp,
@@ -3259,6 +3271,12 @@ private fun MiniPlayer(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(onClick = { showSongDetails = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.Info,
+                        contentDescription = "Ver detalles de la canción",
                     )
                 }
                 IconButton(onClick = onPrevious) {
@@ -3304,11 +3322,19 @@ private fun FullPlayer(
     var localSlider by remember(uiState.currentSong?.id) { mutableFloatStateOf(0f) }
     var isScrubbing by remember(uiState.currentSong?.id) { mutableStateOf(false) }
     var showSpinningDisc by remember(uiState.currentSong?.id) { mutableStateOf(true) }
+    var showSongDetails by rememberSaveable(uiState.currentSong?.id) { mutableStateOf(false) }
     val duration = max(playbackProgress.durationMs, 1L)
     val progress = (playbackProgress.positionMs.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
 
     LaunchedEffect(progress) {
         if (!isScrubbing) localSlider = progress
+    }
+
+    if (showSongDetails) {
+        SongDetailsDialog(
+            song = song,
+            onDismiss = { showSongDetails = false },
+        )
     }
 
     Column(
@@ -3410,6 +3436,12 @@ private fun FullPlayer(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            IconButton(onClick = { showSongDetails = true }) {
+                Icon(
+                    imageVector = Icons.Filled.Info,
+                    contentDescription = "Ver detalles de la canción",
+                )
+            }
             IconButton(onClick = onPrevious) {
                 Icon(
                     imageVector = Icons.Filled.SkipPrevious,
@@ -3435,6 +3467,58 @@ private fun FullPlayer(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SongDetailsDialog(
+    song: Song,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Detalles de la canción") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SongDetailItem(label = "Título", value = song.title)
+                SongDetailItem(label = "Artista", value = song.artist)
+                SongDetailItem(label = "Álbum", value = song.album)
+                SongDetailItem(label = "Duración", value = "${formatDuration(song.durationMs)} (${song.durationMs.coerceAtLeast(0)} ms)")
+                SongDetailItem(label = "Fecha agregada", value = formatDateAdded(song.dateAddedSeconds))
+                SongDetailItem(label = "Carpeta", value = song.folderName)
+                SongDetailItem(label = "Ruta de carpeta", value = song.folderPath)
+                SongDetailItem(label = "URI de contenido", value = song.uri)
+                SongDetailItem(label = "URI de carátula", value = song.artworkUri ?: "No disponible")
+                SongDetailItem(label = "ID", value = song.id.toString())
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        },
+    )
+}
+
+@Composable
+private fun SongDetailItem(
+    label: String,
+    value: String,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value.ifBlank { "No disponible" },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 
@@ -3593,6 +3677,12 @@ private fun formatDuration(durationMs: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return String.format(Locale.getDefault(), "%d:%02d", minutes, seconds)
+}
+
+private fun formatDateAdded(dateAddedSeconds: Long): String {
+    if (dateAddedSeconds <= 0L) return "No disponible"
+    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT, Locale.getDefault())
+        .format(Date(dateAddedSeconds * 1_000L))
 }
 
 private fun String.compactLabel(maxLength: Int = 15): String {

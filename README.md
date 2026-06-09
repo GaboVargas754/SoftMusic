@@ -21,6 +21,38 @@ SoftMusic es un reproductor Android nativo offline inspirado en Spotify.
 - AndroidX Media3
 - Coil para caratulas locales
 
+## Estructura
+
+- `app`: aplicacion Android.
+- `shared`: modelos y estado compartidos entre Android y desktop.
+- `desktop`: version PC/Linux con Compose Desktop.
+
+## Desktop MVP
+
+- Seleccion de carpeta local de musica.
+- Escaneo recursivo de subcarpetas con `java.nio.file`.
+- Lectura de metadatos con Jaudiotagger: titulo, artista, album, duracion y caratulas embebidas.
+- Listado de archivos de audio compatibles: MP3, FLAC, WAV, OGG, OPUS, M4A, AAC, AIFF, ALAC y WMA.
+- Reproduccion desktop inicial con VLC externo (`cvlc`): play, pausa, anterior, siguiente y progreso.
+- Cola desktop con autoavance al terminar la cancion y modos orden, repetir lista, repetir cancion y aleatorio.
+- Busqueda desktop por cancion, artista, album y carpeta.
+- Ordenamiento desktop por recientes o titulo.
+- Vistas desktop por canciones, artistas, albumes y carpetas.
+- Filtro desktop por carpeta.
+- UI desktop con acciones principales mediante iconos y controles de reproductor visuales.
+- Persistencia desktop de carpeta seleccionada, favoritos y playlists.
+- Panel de configuracion desktop con tema sistema/oscuro/claro, caratulas, autoescaneo al iniciar y volumen inicial.
+- Temas desktop equivalentes al telefono: claro, oscuro, noche azul, bosque, atardecer, lavanda y grafito.
+- Modo DJ desktop con crossfade usando dos procesos VLC externos y mezcla configurable entre 5 y 8 segundos.
+
+La configuracion desktop se guarda en `$XDG_CONFIG_HOME/SoftMusic/desktop.properties` o `~/.config/SoftMusic/desktop.properties`.
+
+En Arch Linux instala VLC para que libVLC este disponible:
+
+```bash
+sudo pacman -S vlc
+```
+
 ## Requisitos
 
 - Android Studio o Gradle instalado.
@@ -35,6 +67,18 @@ Si tienes Gradle configurado localmente:
 
 ```bash
 gradle :app:assembleDebug
+```
+
+Para compilar la base desktop:
+
+```bash
+./gradlew :desktop:classes
+```
+
+Para ejecutar desktop:
+
+```bash
+./gradlew :desktop:run
 ```
 
 ## Notas

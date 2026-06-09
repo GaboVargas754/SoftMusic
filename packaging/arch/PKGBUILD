@@ -1,0 +1,49 @@
+# Maintainer: SoftMusic local package
+pkgname=softmusic
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="Reproductor de musica local offline con Compose Desktop"
+arch=('x86_64')
+license=('custom')
+depends=('vlc' 'hicolor-icon-theme')
+makedepends=('jdk17-openjdk')
+source=('softmusic.desktop' 'softmusic.svg')
+sha256sums=('SKIP' 'SKIP')
+options=('!strip')
+
+prepare() {
+  local repo_root="$startdir/../.."
+
+  rm -rf "$srcdir/SoftMusic"
+  mkdir -p "$srcdir/SoftMusic"
+  bsdtar \
+    --exclude='./.git' \
+    --exclude='./.gradle' \
+    --exclude='./local.properties' \
+    --exclude='./build' \
+    --exclude='./app/build' \
+    --exclude='./desktop/build' \
+    --exclude='./shared/build' \
+    --exclude='./packaging/arch/src' \
+    --exclude='./packaging/arch/pkg' \
+    --exclude='./packaging/arch/*.pkg.tar*' \
+    -cf - -C "$repo_root" . | bsdtar -xf - -C "$srcdir/SoftMusic"
+}
+
+build() {
+  cd "$srcdir/SoftMusic"
+  ./gradlew --no-daemon :desktop:createDistributable
+}
+
+package() {
+  local appdir="$srcdir/SoftMusic/desktop/build/compose/binaries/main/app/SoftMusic"
+
+  install -dm755 "$pkgdir/opt/softmusic"
+  cp -a "$appdir"/. "$pkgdir/opt/softmusic/"
+
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s /opt/softmusic/bin/SoftMusic "$pkgdir/usr/bin/softmusic"
+
+  install -Dm644 "$srcdir/softmusic.desktop" "$pkgdir/usr/share/applications/softmusic.desktop"
+  install -Dm644 "$srcdir/softmusic.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/softmusic.svg"
+}

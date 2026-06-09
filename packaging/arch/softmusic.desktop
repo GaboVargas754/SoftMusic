@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=SoftMusic
+Comment=Reproductor de musica local offline
+Exec=softmusic
+Icon=softmusic
+Terminal=false
+Categories=Audio;Music;Player;
+StartupWMClass=SoftMusic

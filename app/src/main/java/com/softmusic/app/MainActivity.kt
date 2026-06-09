@@ -138,15 +138,28 @@ class MainActivity : ComponentActivity() {
                             },
                             onOpenNotificationSettings = ::openNotificationSettings,
                             onOpenAppSettings = ::openAppSettings,
-                            onCloseApp = {
-                                stopService(Intent(this, MusicService::class.java))
-                                finishAndRemoveTask()
-                            },
+                            onCloseApp = { closeApplication() },
                         )
                     }
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (isFinishing && !isChangingConfigurations) {
+            stopMusicService()
+        }
+        super.onDestroy()
+    }
+
+    private fun closeApplication() {
+        stopMusicService()
+        finishAndRemoveTask()
+    }
+
+    private fun stopMusicService() {
+        stopService(Intent(this, MusicService::class.java))
     }
 
     private fun hasAudioPermission(): Boolean {

@@ -1,8 +1,8 @@
 package com.softmusic.app.player
 
-import com.softmusic.app.data.Song
 import com.softmusic.app.data.MusicFolder
 import com.softmusic.app.data.MusicPlaylist
+import com.softmusic.app.data.Song
 
 data class PlayerUiState(
     val songs: List<Song> = emptyList(),

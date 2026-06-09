@@ -74,27 +74,30 @@ class MusicService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        cancelDjTransition()
-        primaryPlayer.run {
-            pause()
-            stop()
-            clearMediaItems()
-        }
-        secondaryPlayer.run {
-            pause()
-            stop()
-            clearMediaItems()
-        }
+        shutdownPlayers()
         stopSelf()
     }
 
     private fun createPlayer(handlesAudioFocus: Boolean): ExoPlayer {
         val player = ExoPlayer.Builder(this).build().apply {
             setAudioAttributes(musicAudioAttributes, handlesAudioFocus)
+            setHandleAudioBecomingNoisy(true)
             volume = 1f
         }
         player.addListener(ServicePlayerListener(player))
         return player
+    }
+
+    private fun shutdownPlayers() {
+        cancelDjTransition()
+        stopPlayer(primaryPlayer)
+        stopPlayer(secondaryPlayer)
+    }
+
+    private fun stopPlayer(player: ExoPlayer) {
+        player.pause()
+        player.stop()
+        player.clearMediaItems()
     }
 
     private inner class ServicePlayerListener(private val observedPlayer: Player) : Player.Listener {
@@ -424,7 +427,7 @@ class MusicService : MediaSessionService() {
 
     override fun onDestroy() {
         djMonitorJob?.cancel()
-        cancelDjTransition()
+        shutdownPlayers()
         mediaSession?.run {
             release()
         }
