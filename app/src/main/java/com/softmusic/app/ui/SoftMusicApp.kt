@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -1475,6 +1477,13 @@ private fun PlaylistSongRow(
                 color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium,
             )
+            IconButton(onClick = { showActions = true }) {
+                Icon(
+                    imageVector = Icons.Filled.MoreVert,
+                    contentDescription = "Mostrar opciones de ${song.title}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             IconButton(onClick = onRemove) {
                 Icon(
                     imageVector = Icons.Filled.Delete,
@@ -3000,6 +3009,13 @@ private fun SongRow(
                 color = if (isPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium,
             )
+            IconButton(onClick = { showActions = true }) {
+                Icon(
+                    imageVector = Icons.Filled.MoreVert,
+                    contentDescription = "Mostrar opciones de ${song.title}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
 
         SongActionsDropdown(
@@ -3226,15 +3242,6 @@ private fun MiniPlayer(
     val song = uiState.currentSong ?: return
     val playbackProgress by playbackProgressState.collectAsStateWithLifecycle()
     val highPerformanceMode = LocalHighPerformanceMode.current
-    var showSongDetails by rememberSaveable(song.id) { mutableStateOf(false) }
-
-    if (showSongDetails) {
-        SongDetailsDialog(
-            song = song,
-            onDismiss = { showSongDetails = false },
-        )
-    }
-
     Surface(
         color = if (highPerformanceMode) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
         shadowElevation = if (highPerformanceMode) 0.dp else 18.dp,
@@ -3271,12 +3278,6 @@ private fun MiniPlayer(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                IconButton(onClick = { showSongDetails = true }) {
-                    Icon(
-                        imageVector = Icons.Filled.Info,
-                        contentDescription = "Ver detalles de la canción",
                     )
                 }
                 IconButton(onClick = onPrevious) {
@@ -3323,6 +3324,7 @@ private fun FullPlayer(
     var isScrubbing by remember(uiState.currentSong?.id) { mutableStateOf(false) }
     var showSpinningDisc by remember(uiState.currentSong?.id) { mutableStateOf(true) }
     var showSongDetails by rememberSaveable(uiState.currentSong?.id) { mutableStateOf(false) }
+    var showPlaybackQueue by rememberSaveable(uiState.currentSong?.id) { mutableStateOf(false) }
     val duration = max(playbackProgress.durationMs, 1L)
     val progress = (playbackProgress.positionMs.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
 
@@ -3334,6 +3336,14 @@ private fun FullPlayer(
         SongDetailsDialog(
             song = song,
             onDismiss = { showSongDetails = false },
+        )
+    }
+
+    if (showPlaybackQueue) {
+        PlaybackQueueDialog(
+            queue = uiState.playbackQueue,
+            currentSong = song,
+            onDismiss = { showPlaybackQueue = false },
         )
     }
 
@@ -3466,7 +3476,114 @@ private fun FullPlayer(
                     contentDescription = "Siguiente",
                 )
             }
+            IconButton(onClick = { showPlaybackQueue = true }) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                    contentDescription = "Ver cola de reproducción",
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun PlaybackQueueDialog(
+    queue: List<Song>,
+    currentSong: Song,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Cola de reproducción") },
+        text = {
+            if (queue.isEmpty()) {
+                Text(
+                    text = "No hay canciones en cola.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = queue.size.songCountLabel(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(360.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        itemsIndexed(
+                            items = queue,
+                            key = { _, song -> song.id },
+                        ) { index, song ->
+                            PlaybackQueueItem(
+                                index = index + 1,
+                                song = song,
+                                isCurrent = song.id == currentSong.id,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        },
+    )
+}
+
+@Composable
+private fun PlaybackQueueItem(
+    index: Int,
+    song: Song,
+    isCurrent: Boolean,
+) {
+    val backgroundColor = if (isCurrent) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+    } else {
+        Color.Transparent
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(backgroundColor)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = index.toString(),
+            modifier = Modifier.width(28.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = song.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = formatDuration(song.durationMs),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
