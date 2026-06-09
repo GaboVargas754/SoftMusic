@@ -685,8 +685,18 @@ private fun ApplicationScope.DesktopApp() {
         }
     }
 
+    fun closeApplication() {
+        audioPlayer.release()
+        exitApplication()
+    }
+
     DisposableEffect(audioPlayer) {
-        onDispose { audioPlayer.release() }
+        val shutdownHook = Thread({ audioPlayer.release() }, "SoftMusic-audio-shutdown")
+        Runtime.getRuntime().addShutdownHook(shutdownHook)
+        onDispose {
+            runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+            audioPlayer.release()
+        }
     }
 
     androidx.compose.runtime.LaunchedEffect(audioPlayer) {
@@ -789,7 +799,7 @@ private fun ApplicationScope.DesktopApp() {
     val desktopIcon = remember { loadDesktopAppIconPainter() }
 
     Window(
-        onCloseRequest = ::exitApplication,
+        onCloseRequest = ::closeApplication,
         title = "SoftMusic",
         icon = desktopIcon,
         state = rememberWindowState(width = 1220.dp, height = 780.dp),

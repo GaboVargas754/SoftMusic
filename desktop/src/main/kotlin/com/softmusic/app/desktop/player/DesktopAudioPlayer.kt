@@ -6,6 +6,7 @@ import java.io.File
 import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -388,6 +389,9 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         runCatching { playback.commandWriter.close() }
         if (playback.process.isAlive) {
             playback.process.destroy()
+            if (!playback.process.waitFor(PROCESS_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                playback.process.destroyForcibly()
+            }
         }
     }
 
@@ -463,6 +467,7 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         const val DJ_FADE_STEPS = 24
         const val SYSTEM_AUDIO_SYNC_ATTEMPTS = 12
         const val SYSTEM_AUDIO_SYNC_INTERVAL_MS = 250L
+        const val PROCESS_STOP_TIMEOUT_MS = 500L
     }
 
     private fun Result<Unit>.mapError(): Result<Unit> = fold(
