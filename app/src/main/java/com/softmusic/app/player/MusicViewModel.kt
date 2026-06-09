@@ -292,13 +292,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(errorMessage = "El reproductor todavía se está preparando") }
             return
         }
-        val sourceSongs = queue.distinctBySongId()
+        val sourceSongs = queue.distinctSongsById()
         if (sourceSongs.isEmpty()) return
 
         val playbackMode = _uiState.value.playbackMode
         if (forceRegenerate || shouldGenerateQueue(sourceSongs, requestedSong, source, sourceKey, playbackMode)) {
             setActiveQueue(
-                queue = sourceSongs.generatedFor(playbackMode, requestedSong),
+                queue = sourceSongs.generatePlaybackQueue(playbackMode, requestedSong),
                 source = source,
                 sourceKey = sourceKey,
                 sourceSongs = sourceSongs,
@@ -422,7 +422,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 activeSourceSongs.visibleSongs(_uiState.value.hiddenFolderPaths)
             }
             if (sourceSongs.isEmpty()) return
-            val generatedQueue = sourceSongs.generatedFor(playbackMode, currentSong)
+            val generatedQueue = sourceSongs.generatePlaybackQueue(playbackMode, currentSong)
             setActiveQueue(
                 queue = generatedQueue,
                 sourceSongs = sourceSongs,
@@ -641,12 +641,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun rebuildShuffleQueueInMemoryFromCurrent(currentSong: Song): Boolean {
-        val sourceSongs = activeSourceSongs.ifEmpty { _uiState.value.playableSongs() }.distinctBySongId()
+        val sourceSongs = activeSourceSongs.ifEmpty { _uiState.value.playableSongs() }.distinctSongsById()
         val current = sourceSongs.firstOrNull { it.id == currentSong.id } ?: return false
         if (sourceSongs.size <= 1) return false
 
         setActiveQueue(
-            queue = sourceSongs.shuffledWithCurrentFirst(current),
+            queue = sourceSongs.shuffledQueueWithCurrentFirst(current),
             sourceSongs = sourceSongs,
             mode = PlaybackMode.Shuffle,
         )
@@ -694,14 +694,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (song.id == currentSong.id) return
 
         val currentId = player.currentMediaItem?.mediaId?.toLongOrNull() ?: currentSong.id
-        val queueWithoutSong = activeQueue.filterNot { it.id == song.id }
-        val currentIndex = queueWithoutSong.indexOfFirst { it.id == currentId }
-        if (currentIndex < 0) return
-
-        val insertIndex = if (afterCurrent) currentIndex + 1 else queueWithoutSong.size
-        val nextQueue = queueWithoutSong.toMutableList().apply {
-            add(insertIndex.coerceIn(0, size), song)
-        }
+        val nextQueue = activeQueue.insertSongNearCurrent(
+            song = song,
+            currentSongId = currentId,
+            afterCurrent = afterCurrent,
+        ) ?: return
         replaceActiveQueuePreservingPlayback(nextQueue, hasManualEdits = true)
     }
 
@@ -797,24 +794,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return false
     }
 
-    private fun List<Song>.generatedFor(playbackMode: PlaybackMode, requestedSong: Song?): List<Song> = when (playbackMode) {
-        PlaybackMode.Shuffle -> shuffled().withRequestedFirst(requestedSong)
-        PlaybackMode.Ordered,
-        PlaybackMode.RepeatList,
-        PlaybackMode.RepeatCurrent -> this
-    }
-
-    private fun List<Song>.withRequestedFirst(requestedSong: Song?): List<Song> {
-        requestedSong ?: return this
-        if (firstOrNull()?.id == requestedSong.id) return this
-        val requested = firstOrNull { it.id == requestedSong.id } ?: return this
-        return listOf(requested) + filterNot { it.id == requestedSong.id }
-    }
-
-    private fun List<Song>.shuffledWithCurrentFirst(currentSong: Song): List<Song> {
-        return listOf(currentSong) + filterNot { it.id == currentSong.id }.shuffled()
-    }
-
     private fun applyPlaybackMode(playbackMode: PlaybackMode, player: Player) {
         player.shuffleModeEnabled = false
         player.repeatMode = when (playbackMode) {
@@ -904,13 +883,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun List<Song>.toMediaItems(): List<MediaItem> = map { song ->
         song.toMediaItem()
-    }
-
-    private fun List<Song>.distinctBySongId(): List<Song> = distinctBy { it.id }
-
-    private fun MusicPlaylist.songsFrom(songs: List<Song>): List<Song> {
-        val songsById = songs.associateBy { it.id }
-        return songIds.mapNotNull(songsById::get)
     }
 
     private fun List<Song>.refreshedFrom(songs: List<Song>): List<Song> {

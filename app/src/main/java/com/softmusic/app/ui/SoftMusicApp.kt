@@ -114,6 +114,7 @@ import coil.compose.AsyncImage
 import com.softmusic.app.data.MusicFolder
 import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.Song
+import com.softmusic.app.data.orderedSongsFrom
 import com.softmusic.app.player.PlaybackMode
 import com.softmusic.app.player.PlaybackProgressState
 import com.softmusic.app.player.PlaybackQueueSource
@@ -3855,8 +3856,7 @@ private fun PlayerUiState.favoriteSongs(): List<Song> = visibleLibrarySongs()
 private fun PlayerUiState.visibleLibrarySongs(): List<Song> = songs.filterNot { it.folderPath in hiddenFolderPaths }
 
 private fun MusicPlaylist.songsFrom(songs: List<Song>, hiddenFolderPaths: Set<String> = emptySet()): List<Song> {
-    val songsById = songs.associateBy { it.id }
-    return songIds.mapNotNull(songsById::get)
+    return orderedSongsFrom(songs)
         .filterNot { it.folderPath in hiddenFolderPaths }
 }
 

@@ -34,6 +34,7 @@ SoftMusic es un reproductor Android nativo offline inspirado en Spotify.
 - Lectura de metadatos con Jaudiotagger: titulo, artista, album, duracion y caratulas embebidas.
 - Listado de archivos de audio compatibles: MP3, FLAC, WAV, OGG, OPUS, M4A, AAC, AIFF, ALAC y WMA.
 - Reproduccion desktop inicial con VLC externo (`cvlc`): play, pausa, anterior, siguiente y progreso.
+- Backend desktop MPV experimental seleccionable por variable de entorno.
 - Cola desktop con autoavance al terminar la cancion y modos orden, repetir lista, repetir cancion y aleatorio.
 - Busqueda desktop por cancion, artista, album y carpeta.
 - Ordenamiento desktop por recientes o titulo.
@@ -52,6 +53,16 @@ En Arch Linux instala VLC para que libVLC este disponible:
 ```bash
 sudo pacman -S vlc
 ```
+
+Para probar el backend experimental con MPV en Arch Linux:
+
+```bash
+sudo pacman -S mpv
+SOFTMUSIC_DESKTOP_BACKEND=mpv ./gradlew :desktop:run
+```
+
+VLC sigue siendo el backend predeterminado mientras MPV se valida.
+También puedes cambiar el backend desde `Configuración > Backend de audio` en la app desktop.
 
 ## Requisitos
 

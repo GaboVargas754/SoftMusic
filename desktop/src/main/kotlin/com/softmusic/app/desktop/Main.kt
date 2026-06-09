@@ -105,8 +105,13 @@ import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.material3.AlertDialog
 import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.Song
+import com.softmusic.app.data.orderedSongsFrom
 import com.softmusic.app.desktop.data.DesktopMusicScanner
-import com.softmusic.app.desktop.player.DesktopAudioPlayer
+import com.softmusic.app.desktop.player.DesktopPlaybackBackend
+import com.softmusic.app.desktop.player.DesktopPlaybackSnapshot
+import com.softmusic.app.desktop.player.DesktopPlaybackBackendType
+import com.softmusic.app.desktop.player.createDesktopPlaybackBackend
+import com.softmusic.app.desktop.player.resolveDesktopPlaybackBackend
 import com.softmusic.app.desktop.prefs.DesktopPreferences
 import com.softmusic.app.desktop.prefs.DesktopLibraryView
 import com.softmusic.app.desktop.prefs.DesktopSettings
@@ -114,6 +119,11 @@ import com.softmusic.app.desktop.prefs.DesktopThemeMode
 import com.softmusic.app.desktop.prefs.DesktopPreferencesStore
 import com.softmusic.app.player.PlaybackMode
 import com.softmusic.app.player.SortMode
+import com.softmusic.app.player.distinctSongsById
+import com.softmusic.app.player.generatePlaybackQueue
+import com.softmusic.app.player.insertSongNearCurrent
+import com.softmusic.app.player.nextQueueMove
+import com.softmusic.app.player.previousQueueMove
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -275,7 +285,6 @@ fun main() = application {
 @Composable
 private fun ApplicationScope.DesktopApp() {
     val scanner = remember { DesktopMusicScanner() }
-    val audioPlayer = remember { DesktopAudioPlayer() }
     val preferencesStore = remember { DesktopPreferencesStore() }
     val initialPreferences = remember { preferencesStore.load() }
     val scope = rememberCoroutineScope()
@@ -294,9 +303,16 @@ private fun ApplicationScope.DesktopApp() {
     var pendingDjCurrentSongId by remember { mutableStateOf<Long?>(null) }
     var pendingDjTargetSong by remember { mutableStateOf<Song?>(null) }
     var activeQueue by remember { mutableStateOf(emptyList<Song>()) }
+    var activeSourceQueue by remember { mutableStateOf(emptyList<Song>()) }
     var favoriteSongIds by remember { mutableStateOf(initialPreferences.favoriteSongIds) }
     var playlists by remember { mutableStateOf(initialPreferences.playlists) }
     var desktopSettings by remember { mutableStateOf(initialPreferences.settings) }
+    val backendSelection = remember(desktopSettings.playbackBackend) {
+        resolveDesktopPlaybackBackend(desktopSettings.playbackBackend)
+    }
+    val audioPlayer: DesktopPlaybackBackend = remember(backendSelection.type) {
+        createDesktopPlaybackBackend(backendSelection.type)
+    }
     var selectedSection by remember { mutableStateOf(DesktopSection.Home) }
     var selectedPlaylistId by remember { mutableStateOf<String?>(null) }
     var newPlaylistName by remember { mutableStateOf("") }
@@ -324,11 +340,7 @@ private fun ApplicationScope.DesktopApp() {
         showFavoritesOnly = true,
         selectedPlaylist = null,
     ).sortedFor(desktopSettings.sortMode)
-    val selectedPlaylistSongs = songs.displayedFor(
-        favoriteSongIds = favoriteSongIds,
-        showFavoritesOnly = false,
-        selectedPlaylist = selectedPlaylist,
-    ).sortedFor(desktopSettings.sortMode)
+    val selectedPlaylistSongs = selectedPlaylist?.orderedSongsFrom(songs).orEmpty()
 
     fun persistPreferences(
         selectedFolderPath: String? = selectedFolder?.toString(),
@@ -406,18 +418,40 @@ private fun ApplicationScope.DesktopApp() {
     }
 
     fun updateSettings(nextSettings: DesktopSettings) {
+        val previousSettings = desktopSettings
         val safeSettings = nextSettings.copy(
             volumePercent = nextSettings.volumePercent.coerceIn(0, 100),
             djMixDurationSeconds = nextSettings.djMixDurationSeconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS),
         )
+        val backendChanged = previousSettings.playbackBackend != safeSettings.playbackBackend
+        if (backendChanged) {
+            audioPlayer.stop()
+            currentSong = null
+            activeQueue = emptyList()
+            activeSourceQueue = emptyList()
+            isPlaying = false
+            positionMs = 0L
+            durationMs = 0L
+            estimatedPlaybackEndDeadlineMillis = null
+            pendingDjCurrentSongId = null
+            pendingDjTargetSong = null
+            playbackErrorMessage = null
+        }
         desktopSettings = safeSettings
         persistPreferences(nextSettings = safeSettings)
+        if (previousSettings.playbackMode != safeSettings.playbackMode) {
+            currentSong?.let { current ->
+                val sourceQueue = activeSourceQueue.ifEmpty { activeQueue.ifEmpty { listOf(current) } }.distinctSongsById()
+                activeSourceQueue = sourceQueue
+                activeQueue = sourceQueue.generatePlaybackQueue(safeSettings.playbackMode, current)
+            }
+        }
         if (safeSettings.volumePercent == 0) {
             playbackErrorMessage = "El volumen está en 0%"
         } else if (playbackErrorMessage == "El volumen está en 0%") {
             playbackErrorMessage = null
         }
-        if (!safeSettings.djModeEnabled || safeSettings.playbackMode == PlaybackMode.RepeatCurrent) {
+        if (!backendChanged && (!safeSettings.djModeEnabled || safeSettings.playbackMode == PlaybackMode.RepeatCurrent)) {
             pendingDjCurrentSongId = null
             pendingDjTargetSong = null
             audioPlayer.clearPreparedDjTransition()
@@ -425,14 +459,15 @@ private fun ApplicationScope.DesktopApp() {
                     playbackErrorMessage = throwable.message ?: "No se pudo limpiar la precarga DJ"
                 }
         }
-        audioPlayer.setVolume(safeSettings.volumePercent)
-            .onFailure { throwable ->
-                playbackErrorMessage = throwable.message ?: "No se pudo aplicar el volumen"
-            }
+        if (!backendChanged) {
+            audioPlayer.setVolume(safeSettings.volumePercent)
+                .onFailure { throwable ->
+                    playbackErrorMessage = throwable.message ?: "No se pudo aplicar el volumen"
+                }
+        }
     }
 
-    fun applySnapshot(): Boolean {
-        val snapshot = audioPlayer.snapshot()
+    fun applySnapshot(snapshot: DesktopPlaybackSnapshot = audioPlayer.snapshot()): Boolean {
         isPlaying = snapshot.isPlaying
         positionMs = snapshot.positionMs
         durationMs = snapshot.durationMs
@@ -451,8 +486,18 @@ private fun ApplicationScope.DesktopApp() {
         applySnapshot()
     }
 
-    fun playSong(song: Song, queue: List<Song> = displayedSongs.ifEmpty { songs }) {
-        activeQueue = queue.ifEmpty { listOf(song) }
+    fun playSong(
+        song: Song,
+        queue: List<Song> = displayedSongs.ifEmpty { songs },
+        regenerateQueue: Boolean = true,
+    ) {
+        if (regenerateQueue) {
+            val sourceQueue = queue.distinctSongsById().ifEmpty { listOf(song) }
+            activeSourceQueue = sourceQueue
+            activeQueue = sourceQueue.generatePlaybackQueue(desktopSettings.playbackMode, song)
+        } else {
+            activeQueue = queue.ifEmpty { listOf(song) }
+        }
         currentSong = song
         estimatedPlaybackEndDeadlineMillis = null
         pendingDjCurrentSongId = null
@@ -495,18 +540,12 @@ private fun ApplicationScope.DesktopApp() {
             playSong(song, listOf(song))
             return
         }
-        if (song.id == current.id) return
-
         val queue = queueSongs()
             .ifEmpty { listOf(current) }
             .let { currentQueue ->
                 if (currentQueue.any { it.id == current.id }) currentQueue else listOf(current) + currentQueue
             }
-            .filterNot { it.id == song.id }
-        val currentIndex = queue.indexOfFirst { it.id == current.id }.coerceAtLeast(0)
-        activeQueue = queue.toMutableList().apply {
-            add((currentIndex + 1).coerceIn(0, size), song)
-        }
+        activeQueue = queue.insertSongNearCurrent(song = song, currentSongId = current.id, afterCurrent = true) ?: return
     }
 
     fun queueSongAtEnd(song: Song) {
@@ -514,21 +553,19 @@ private fun ApplicationScope.DesktopApp() {
             playSong(song, listOf(song))
             return
         }
-        if (song.id == current.id) return
-
         val queue = queueSongs()
             .ifEmpty { listOf(current) }
             .let { currentQueue ->
                 if (currentQueue.any { it.id == current.id }) currentQueue else listOf(current) + currentQueue
             }
-            .filterNot { it.id == song.id }
-        activeQueue = queue + song
+        activeQueue = queue.insertSongNearCurrent(song = song, currentSongId = current.id, afterCurrent = false) ?: return
     }
 
     fun stopPlayback() {
         audioPlayer.stop()
         currentSong = null
         activeQueue = emptyList()
+        activeSourceQueue = emptyList()
         isPlaying = false
         positionMs = 0L
         durationMs = 0L
@@ -539,22 +576,31 @@ private fun ApplicationScope.DesktopApp() {
 
     fun playNextSong(manual: Boolean) {
         val queue = queueSongs()
-        val nextSong = queue.nextSongFor(
+        val move = queue.nextQueueMove(
+            sourceSongs = activeSourceQueue,
             currentSong = currentSong,
             playbackMode = desktopSettings.playbackMode,
             manual = manual,
         )
-        if (nextSong == null) {
+        if (move == null) {
             if (!manual) stopPlayback()
             return
         }
-        playSong(nextSong, queue)
+        activeQueue = move.queue
+        val nextSong = move.queue.getOrNull(move.index) ?: return
+        playSong(nextSong, move.queue, regenerateQueue = false)
     }
 
     fun playPreviousSong() {
         val queue = queueSongs()
-        val previousSong = queue.previousSongFor(currentSong, desktopSettings.playbackMode) ?: return
-        playSong(previousSong, queue)
+        val move = queue.previousQueueMove(
+            currentSong = currentSong,
+            playbackMode = desktopSettings.playbackMode,
+            currentPositionMs = positionMs,
+        ) ?: return
+        activeQueue = move.queue
+        val previousSong = move.queue.getOrNull(move.index) ?: return
+        playSong(previousSong, move.queue, regenerateQueue = false)
     }
 
     fun maybeStartDjTransition(): Boolean {
@@ -583,13 +629,18 @@ private fun ApplicationScope.DesktopApp() {
 
         val nextSong = pendingDjTargetSong
             ?.takeIf { pendingDjCurrentSongId == current.id && queue.any { queuedSong -> queuedSong.id == it.id } }
-            ?: queue.nextSongFor(
-                currentSong = current,
-                playbackMode = desktopSettings.playbackMode,
-                manual = false,
-            )?.also { target ->
-                pendingDjCurrentSongId = current.id
-                pendingDjTargetSong = target
+            ?: run {
+                val move = queue.nextQueueMove(
+                    sourceSongs = activeSourceQueue,
+                    currentSong = current,
+                    playbackMode = desktopSettings.playbackMode,
+                    manual = false,
+                ) ?: return false
+                activeQueue = move.queue
+                move.queue.getOrNull(move.index)?.also { target ->
+                    pendingDjCurrentSongId = current.id
+                    pendingDjTargetSong = target
+                }
             }
             ?: return false
         if (nextSong.id == current.id) return false
@@ -634,13 +685,14 @@ private fun ApplicationScope.DesktopApp() {
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(audioPlayer) {
         onDispose { audioPlayer.release() }
     }
 
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    androidx.compose.runtime.LaunchedEffect(audioPlayer) {
         while (true) {
-            val playbackEnded = applySnapshot()
+            val snapshot = withContext(Dispatchers.IO) { audioPlayer.snapshot() }
+            val playbackEnded = applySnapshot(snapshot)
             val transitionStarted = maybeStartDjTransition()
             if (playbackEnded && currentSong != null) {
                 estimatedPlaybackEndDeadlineMillis = null
@@ -658,7 +710,7 @@ private fun ApplicationScope.DesktopApp() {
                 positionMs == 0L &&
                 playbackErrorMessage == null
             ) {
-                playbackErrorMessage = "VLC aceptó el archivo, pero la reproducción no inició. Prueba abrir ese archivo con VLC."
+                playbackErrorMessage = "El backend ${backendSelection.type.label} aceptó el archivo, pero la reproducción no inició. Prueba abrir ese archivo con el mismo reproductor."
                 playbackStartDeadlineMillis = null
             }
             delay(500L)
@@ -873,6 +925,8 @@ private fun ApplicationScope.DesktopApp() {
                         ) {
                             SettingsPanel(
                                 settings = desktopSettings,
+                                activeBackend = backendSelection.type,
+                                backendOverridden = backendSelection.isOverridden,
                                 onSettingsChange = ::updateSettings,
                             )
                         }
@@ -1893,6 +1947,8 @@ private fun SummaryPill(text: String) {
 @Composable
 private fun SettingsPanel(
     settings: DesktopSettings,
+    activeBackend: DesktopPlaybackBackendType,
+    backendOverridden: Boolean,
     onSettingsChange: (DesktopSettings) -> Unit,
 ) {
     val colors = LocalDesktopColors.current
@@ -1925,6 +1981,34 @@ private fun SettingsPanel(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "Backend de audio",
+                color = colors.muted,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(DesktopPlaybackBackendType.entries, key = { it.name }) { backend ->
+                    FilterButton(
+                        label = backend.label,
+                        selected = settings.playbackBackend == backend,
+                        onClick = { onSettingsChange(settings.copy(playbackBackend = backend)) },
+                    )
+                }
+            }
+            Text(
+                modifier = Modifier.padding(top = 8.dp),
+                text = if (backendOverridden) {
+                    "Backend activo: ${activeBackend.label} (forzado por entorno). ${activeBackend.description}"
+                } else {
+                    settings.playbackBackend.description
+                },
+                color = colors.subtle,
+                style = MaterialTheme.typography.bodySmall,
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -3202,14 +3286,9 @@ private fun List<Song>.displayedFor(
     showFavoritesOnly: Boolean,
     selectedPlaylist: MusicPlaylist?,
 ): List<Song> = when {
-    selectedPlaylist != null -> selectedPlaylist.songsFrom(this)
+    selectedPlaylist != null -> selectedPlaylist.orderedSongsFrom(this)
     showFavoritesOnly -> filter { it.id in favoriteSongIds }
     else -> this
-}
-
-private fun MusicPlaylist.songsFrom(songs: List<Song>): List<Song> {
-    val songsById = songs.associateBy { it.id }
-    return songIds.mapNotNull(songsById::get)
 }
 
 private fun List<Song>.sortedFor(sortMode: SortMode): List<Song> = when (sortMode) {
@@ -3275,49 +3354,6 @@ private fun String.normalizedSearchText(): String {
     return normalized.lowercase().trim()
 }
 
-private fun List<Song>.relativeTo(currentSong: Song?, offset: Int): Song? {
-    if (isEmpty()) return null
-    val currentIndex = currentSong?.let { song -> indexOfFirst { it.id == song.id } } ?: -1
-    if (currentIndex < 0) return firstOrNull()
-    val nextIndex = (currentIndex + offset).floorMod(size)
-    return getOrNull(nextIndex)
-}
-
-private fun List<Song>.nextSongFor(
-    currentSong: Song?,
-    playbackMode: PlaybackMode,
-    manual: Boolean,
-): Song? {
-    if (isEmpty()) return null
-    if (currentSong == null) return firstOrNull()
-    return when (playbackMode) {
-        PlaybackMode.RepeatCurrent -> if (manual) relativeTo(currentSong, 1) else currentSong
-        PlaybackMode.RepeatList -> relativeTo(currentSong, 1)
-        PlaybackMode.Shuffle -> randomNextAfter(currentSong)
-        PlaybackMode.Ordered -> nextOrderedAfter(currentSong)
-    }
-}
-
-private fun List<Song>.previousSongFor(currentSong: Song?, playbackMode: PlaybackMode): Song? {
-    if (playbackMode != PlaybackMode.Ordered) return relativeTo(currentSong, -1)
-    if (isEmpty()) return null
-    val currentIndex = currentSong?.let { song -> indexOfFirst { it.id == song.id } } ?: -1
-    if (currentIndex < 0) return firstOrNull()
-    return getOrNull((currentIndex - 1).coerceAtLeast(0))
-}
-
-private fun List<Song>.nextOrderedAfter(currentSong: Song): Song? {
-    val currentIndex = indexOfFirst { it.id == currentSong.id }
-    if (currentIndex < 0) return firstOrNull()
-    val nextIndex = currentIndex + 1
-    return getOrNull(nextIndex)
-}
-
-private fun List<Song>.randomNextAfter(currentSong: Song): Song? {
-    if (size <= 1) return currentSong
-    return filterNot { it.id == currentSong.id }.randomOrNull() ?: currentSong
-}
-
 private fun PlaybackMode.shortDesktopLabel(): String = when (this) {
     PlaybackMode.Ordered -> "Orden"
     PlaybackMode.RepeatList -> "Repetir lista"
@@ -3338,8 +3374,6 @@ private fun DesktopLibraryView.icon(): ImageVector = when (this) {
     DesktopLibraryView.Albums -> Icons.Filled.Album
     DesktopLibraryView.Folders -> Icons.Filled.Folder
 }
-
-private fun Int.floorMod(size: Int): Int = ((this % size) + size) % size
 
 private fun Long.formatPlaybackTime(): String {
     val totalSeconds = (this / 1_000L).coerceAtLeast(0L)

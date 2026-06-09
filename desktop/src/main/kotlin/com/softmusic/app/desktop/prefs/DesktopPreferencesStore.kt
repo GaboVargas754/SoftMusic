@@ -1,6 +1,7 @@
 package com.softmusic.app.desktop.prefs
 
 import com.softmusic.app.data.MusicPlaylist
+import com.softmusic.app.desktop.player.DesktopPlaybackBackendType
 import com.softmusic.app.player.PlaybackMode
 import com.softmusic.app.player.SortMode
 import java.nio.file.Files
@@ -35,6 +36,9 @@ class DesktopPreferencesStore(
                     ?: DesktopThemeMode.Dark,
                 showArtwork = properties.getProperty(KEY_SHOW_ARTWORK)?.toBooleanStrictOrNull() ?: true,
                 scanOnStartup = properties.getProperty(KEY_SCAN_ON_STARTUP)?.toBooleanStrictOrNull() ?: true,
+                playbackBackend = properties.getProperty(KEY_PLAYBACK_BACKEND)
+                    ?.let { value -> runCatching { DesktopPlaybackBackendType.valueOf(value) }.getOrNull() }
+                    ?: DesktopPlaybackBackendType.Vlc,
                 volumePercent = properties.getProperty(KEY_VOLUME_PERCENT)
                     ?.toIntOrNull()
                     ?.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT)
@@ -67,6 +71,7 @@ class DesktopPreferencesStore(
             setProperty(KEY_THEME_MODE, preferences.settings.themeMode.name)
             setProperty(KEY_SHOW_ARTWORK, preferences.settings.showArtwork.toString())
             setProperty(KEY_SCAN_ON_STARTUP, preferences.settings.scanOnStartup.toString())
+            setProperty(KEY_PLAYBACK_BACKEND, preferences.settings.playbackBackend.name)
             setProperty(KEY_VOLUME_PERCENT, preferences.settings.volumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT).toString())
             setProperty(KEY_PLAYBACK_MODE, preferences.settings.playbackMode.name)
             setProperty(KEY_SORT_MODE, preferences.settings.sortMode.name)
@@ -110,6 +115,7 @@ class DesktopPreferencesStore(
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_SHOW_ARTWORK = "show_artwork"
         const val KEY_SCAN_ON_STARTUP = "scan_on_startup"
+        const val KEY_PLAYBACK_BACKEND = "playback_backend"
         const val KEY_VOLUME_PERCENT = "volume_percent"
         const val KEY_PLAYBACK_MODE = "playback_mode"
         const val KEY_SORT_MODE = "sort_mode"
@@ -147,6 +153,7 @@ data class DesktopSettings(
     val themeMode: DesktopThemeMode = DesktopThemeMode.Dark,
     val showArtwork: Boolean = true,
     val scanOnStartup: Boolean = true,
+    val playbackBackend: DesktopPlaybackBackendType = DesktopPlaybackBackendType.Vlc,
     val volumePercent: Int = 80,
     val playbackMode: PlaybackMode = PlaybackMode.Ordered,
     val sortMode: SortMode = SortMode.Recent,

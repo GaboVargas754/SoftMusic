@@ -6,6 +6,7 @@ pkgdesc="Reproductor de musica local offline con Compose Desktop"
 arch=('x86_64')
 license=('custom')
 depends=('vlc' 'hicolor-icon-theme')
+optdepends=('mpv: backend de reproduccion experimental alternativo')
 makedepends=('jdk17-openjdk')
 source=('softmusic.desktop' 'softmusic.svg')
 sha256sums=('SKIP' 'SKIP')

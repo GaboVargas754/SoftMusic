@@ -1,21 +1,26 @@
 package com.softmusic.app.desktop.player
 
 import com.softmusic.app.data.Song
-import java.io.BufferedWriter
 import java.io.File
 import java.net.URI
+import java.net.UnixDomainSocketAddress
+import java.nio.ByteBuffer
+import java.nio.channels.SocketChannel
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-class DesktopAudioPlayer : DesktopPlaybackBackend {
+class MpvPlaybackBackend : DesktopPlaybackBackend {
     private val stateLock = Any()
-    private var active: VlcPlayback? = null
-    private var standby: VlcPlayback? = null
-    private val fadingOut = mutableSetOf<VlcPlayback>()
+    private var active: MpvPlayback? = null
+    private var standby: MpvPlayback? = null
+    private val fadingOut = mutableSetOf<MpvPlayback>()
     private var pendingPlaybackEnded: Boolean = false
     private var djTransitionActive: Boolean = false
     @Volatile private var lastErrorMessage: String? = null
@@ -40,7 +45,7 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
             val playback = active ?: return@runCatching
             if (!playback.process.isAlive || djTransitionActive) return@runCatching
             if (standby?.songId == song.id && standby?.process?.isAlive == true) {
-                standby?.let { setInstanceVolume(it, 0, scheduleSync = false) }
+                standby?.let { setInstanceVolume(it, 0) }
                 return@runCatching
             }
             stopStandbyLocked()
@@ -67,8 +72,8 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
     ): Result<Unit> = runCatching {
         val safeVolume = volumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT)
         val safeMixDurationMs = mixDurationMs.coerceIn(MIN_DJ_FADE_MS, MAX_DJ_MIX_SECONDS * 1_000L)
-        val outgoing: VlcPlayback?
-        val incoming: VlcPlayback
+        val outgoing: MpvPlayback?
+        val incoming: MpvPlayback
 
         synchronized(stateLock) {
             if (djTransitionActive) return@runCatching
@@ -99,9 +104,7 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
     override fun setVolume(volumePercent: Int): Result<Unit> = runCatching {
         val safeVolume = volumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT)
         synchronized(stateLock) {
-            active?.let { playback ->
-                setInstanceVolume(playback, safeVolume)
-            }
+            active?.let { playback -> setInstanceVolume(playback, safeVolume) }
         }
         Unit
     }.mapError()
@@ -113,9 +116,7 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
             if (!playback.process.isAlive) {
                 throw IllegalStateException("La reproducción ya terminó; vuelve a seleccionar la canción")
             }
-            sendCommand(playback, "pause")
-            playback.positionStartedAtMs = System.currentTimeMillis()
-            playback.playing = true
+            resumeInstanceLocked(playback)
         }
     }.mapError()
 
@@ -124,7 +125,7 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
             val playback = active ?: return@runCatching
             if (playback.process.isAlive && playback.playing) {
                 playback.positionBaseMs = playback.currentPositionMs()
-                sendCommand(playback, "pause")
+                sendCommand(playback, setPauseCommand(paused = true))
                 playback.playing = false
             }
         }
@@ -144,7 +145,7 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
             val safePositionMs = positionMs.coerceIn(0L, playback.durationMs.takeIf { it > 0L } ?: Long.MAX_VALUE)
             playback.positionBaseMs = safePositionMs
             if (playback.playing) playback.positionStartedAtMs = System.currentTimeMillis()
-            sendCommand(playback, "seek ${safePositionMs / 1_000L}")
+            sendCommand(playback, setTimePositionCommand(safePositionMs))
         }
     }.mapError()
 
@@ -165,6 +166,7 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         }
 
         if (standby?.process?.isAlive == false) stopStandbyLocked()
+        refreshPlaybackState(playback)
 
         val ended = pendingPlaybackEnded
         pendingPlaybackEnded = false
@@ -184,22 +186,25 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         }
     }
 
-    private fun startPlaybackLocked(song: Song, volumePercent: Int, startPaused: Boolean): VlcPlayback {
+    private fun startPlaybackLocked(song: Song, volumePercent: Int, startPaused: Boolean): MpvPlayback {
         val playableLocation = song.uri.toPlayableLocation()
         if (!Files.isReadable(playableLocation.path)) {
             throw IllegalStateException("No se puede leer el archivo: ${playableLocation.path}")
         }
 
+        val ipcSocket = Files.createTempFile("softmusic-mpv-", ".sock")
+        Files.deleteIfExists(ipcSocket)
         val command = mutableListOf(
-            resolveVlcExecutable(),
-            "--intf",
-            "rc",
-            "--rc-fake-tty",
+            resolveMpvExecutable(),
             "--no-video",
-            "--role=music",
-            "--play-and-exit",
+            "--force-window=no",
+            "--idle=no",
+            "--no-terminal",
+            "--really-quiet",
+            "--input-ipc-server=$ipcSocket",
+            "--volume=${volumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT)}",
         ).apply {
-            if (startPaused) add("--start-paused")
+            if (startPaused) add("--pause=yes")
             add(playableLocation.path.toString())
         }
 
@@ -208,26 +213,25 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
             .redirectError(ProcessBuilder.Redirect.DISCARD)
             .start()
 
-        val playback = VlcPlayback(
+        waitForIpcSocket(ipcSocket, process)
+
+        val playback = MpvPlayback(
             songId = song.id,
             process = process,
-            commandWriter = process.outputStream.bufferedWriter(),
+            ipcSocket = ipcSocket,
             durationMs = song.durationMs.coerceAtLeast(0L),
             positionBaseMs = 0L,
             positionStartedAtMs = System.currentTimeMillis(),
             playing = !startPaused,
-        )
-        setInstanceVolume(
-            playback = playback,
             volumePercent = volumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT),
-            scheduleSync = !startPaused,
         )
+        refreshPlaybackState(playback)
         return playback
     }
 
     private fun startCrossfade(
-        outgoing: VlcPlayback,
-        incoming: VlcPlayback,
+        outgoing: MpvPlayback,
+        incoming: MpvPlayback,
         targetVolumePercent: Int,
         durationMs: Long,
     ) {
@@ -255,10 +259,8 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
                         djTransitionActive = false
                         return@Thread
                     }
-                    setInstanceVolume(incoming, incomingVolume, scheduleSync = false)
-                    setInstanceVolume(outgoing, outgoingVolume, scheduleSync = false)
-                    syncSystemAudioStream(incoming.process.pid(), incomingVolume)
-                    syncSystemAudioStream(outgoing.process.pid(), outgoingVolume)
+                    setInstanceVolume(incoming, incomingVolume)
+                    setInstanceVolume(outgoing, outgoingVolume)
                 }
             }
 
@@ -273,94 +275,123 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
                 djTransitionActive = false
             }
         }.apply {
-            name = "SoftMusic-dj-crossfade-${incoming.process.pid()}"
+            name = "SoftMusic-mpv-dj-crossfade-${incoming.process.pid()}"
             isDaemon = true
         }.start()
     }
 
-    private fun resumeInstanceLocked(playback: VlcPlayback) {
+    private fun resumeInstanceLocked(playback: MpvPlayback) {
         if (!playback.process.isAlive || playback.playing) return
         playback.positionStartedAtMs = System.currentTimeMillis()
         playback.playing = true
-        sendCommand(playback, "pause")
+        sendCommand(playback, setPauseCommand(paused = false))
     }
 
-    private fun setInstanceVolume(
-        playback: VlcPlayback,
-        volumePercent: Int,
-        scheduleSync: Boolean = true,
-    ) {
+    private fun setInstanceVolume(playback: MpvPlayback, volumePercent: Int) {
         val safeVolume = volumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT)
         playback.volumePercent = safeVolume
-        sendCommand(playback, "volume ${safeVolume.toVlcVolume()}")
-        if (scheduleSync) scheduleSystemAudioSync(playback, safeVolume)
+        sendCommand(playback, setVolumeCommand(safeVolume))
     }
 
-    private fun sendCommand(playback: VlcPlayback, command: String) {
+    private fun refreshPlaybackState(playback: MpvPlayback) {
         if (!playback.process.isAlive) return
-        runCatching {
-            playback.commandWriter.apply {
-                write(command)
-                newLine()
-                flush()
+        readBooleanProperty(playback, "eof-reached")?.let { ended ->
+            if (ended && playback.playing) {
+                pendingPlaybackEnded = true
+                playback.playing = false
             }
-        }.onFailure { throwable ->
-            lastErrorMessage = throwable.message ?: "No se pudo enviar el comando a VLC"
+        }
+        readBooleanProperty(playback, "pause")?.let { paused ->
+            val nextPlaying = !paused
+            if (playback.playing != nextPlaying) {
+                playback.positionBaseMs = playback.currentPositionMs()
+                playback.positionStartedAtMs = System.currentTimeMillis()
+                playback.playing = nextPlaying
+            }
+        }
+        readDoubleProperty(playback, "duration")
+            ?.takeIf { it > 0.0 }
+            ?.let { playback.durationMs = (it * 1_000.0).toLong().coerceAtLeast(0L) }
+        readDoubleProperty(playback, "time-pos")
+            ?.takeIf { it >= 0.0 }
+            ?.let { positionSeconds ->
+                playback.positionBaseMs = (positionSeconds * 1_000.0).toLong().coerceAtLeast(0L)
+                playback.positionStartedAtMs = System.currentTimeMillis()
+            }
+    }
+
+    private fun sendCommand(playback: MpvPlayback, command: String) {
+        if (!playback.process.isAlive || !Files.exists(playback.ipcSocket)) return
+        runCatching { sendIpcRequest(playback, command, readResponse = false) }
+            .onFailure { throwable ->
+                lastErrorMessage = throwable.message ?: "No se pudo enviar el comando a MPV"
+            }
+    }
+
+    private fun readDoubleProperty(playback: MpvPlayback, property: String): Double? {
+        return readPropertyResponse(playback, property)?.toDoubleOrNull()
+    }
+
+    private fun readBooleanProperty(playback: MpvPlayback, property: String): Boolean? {
+        return when (readPropertyResponse(playback, property)) {
+            "true" -> true
+            "false" -> false
+            else -> null
         }
     }
 
-    private fun scheduleSystemAudioSync(playback: VlcPlayback, volumePercent: Int) {
-        val pid = playback.process.pid()
-        Thread {
-            var foundStream = false
-            repeat(SYSTEM_AUDIO_SYNC_ATTEMPTS) {
-                if (!playback.process.isAlive) return@Thread
-                if (syncSystemAudioStream(pid, volumePercent)) {
-                    foundStream = true
+    private fun readPropertyResponse(playback: MpvPlayback, property: String): String? {
+        if (!playback.process.isAlive || !Files.exists(playback.ipcSocket)) return null
+        val request = "{\"command\":[\"get_property\",\"$property\"]}"
+        return runCatching { sendIpcRequest(playback, request, readResponse = true) }
+            .onFailure { throwable -> lastErrorMessage = throwable.message ?: "No se pudo leer estado de MPV" }
+            .getOrNull()
+            ?.substringAfter("\"data\":", missingDelimiterValue = "")
+            ?.substringBefore(",\"error\"", missingDelimiterValue = "")
+            ?.trim()
+            ?.trim('"')
+            ?.takeIf { it.isNotBlank() && it != "null" }
+    }
+
+    private fun sendIpcRequest(playback: MpvPlayback, command: String, readResponse: Boolean): String? {
+        SocketChannel.open(UnixDomainSocketAddress.of(playback.ipcSocket)).use { channel ->
+            val bytes = (command + "\n").toByteArray(StandardCharsets.UTF_8)
+            val writeBuffer = ByteBuffer.wrap(bytes)
+            while (writeBuffer.hasRemaining()) {
+                channel.write(writeBuffer)
+            }
+            if (!readResponse) return null
+
+            channel.configureBlocking(false)
+            val readBuffer = ByteBuffer.allocate(IPC_RESPONSE_BUFFER_BYTES)
+            val response = StringBuilder()
+            val deadlineMs = System.currentTimeMillis() + IPC_READ_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadlineMs) {
+                val bytesRead = channel.read(readBuffer)
+                if (bytesRead < 0) break
+                if (bytesRead == 0) {
+                    Thread.sleep(IPC_READ_POLL_INTERVAL_MS)
+                    continue
                 }
-                Thread.sleep(SYSTEM_AUDIO_SYNC_INTERVAL_MS)
+                readBuffer.flip()
+                response.append(StandardCharsets.UTF_8.decode(readBuffer).toString())
+                readBuffer.clear()
+                val responseLine = response.lineSequence()
+                    .map { it.trim() }
+                    .firstOrNull { it.contains("\"error\":") }
+                if (responseLine != null) return responseLine
             }
-            if (!foundStream && playback.process.isAlive) {
-                lastErrorMessage = "No pude encontrar el stream de VLC para desmutearlo en PipeWire"
-            }
-        }.apply {
-            name = "SoftMusic-audio-sync-$pid"
-            isDaemon = true
-        }.start()
-    }
-
-    private fun syncSystemAudioStream(pid: Long, volumePercent: Int): Boolean {
-        val sinkInputId = findPulseSinkInputId(pid) ?: return false
-        runCommand("pactl", "set-sink-input-mute", sinkInputId, "0")
-        runCommand("pactl", "set-sink-input-volume", sinkInputId, "${volumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT)}%")
-        return true
-    }
-
-    private fun findPulseSinkInputId(pid: Long): String? {
-        val output = runCommand("pactl", "list", "sink-inputs").getOrNull() ?: return null
-        var currentSinkInputId: String? = null
-        output.lineSequence().forEach { line ->
-            val trimmed = line.trim()
-            if (trimmed.startsWith("Sink Input #")) {
-                currentSinkInputId = trimmed.substringAfter('#').trim()
-            }
-            if (trimmed == "application.process.id = \"$pid\"") {
-                return currentSinkInputId
-            }
+            return response.toString().lineSequence().firstOrNull { it.contains("\"error\":") }?.trim()
         }
-        return null
     }
 
-    private fun runCommand(vararg command: String): Result<String> = runCatching {
-        val process = ProcessBuilder(*command)
-            .redirectErrorStream(true)
-            .start()
-        val output = process.inputStream.bufferedReader().use { it.readText() }
-        val exitCode = process.waitFor()
-        if (exitCode != 0) {
-            throw IllegalStateException(output.ifBlank { "Comando falló: ${command.joinToString(" ")}" })
+    private fun waitForIpcSocket(ipcSocket: Path, process: Process) {
+        repeat(IPC_START_ATTEMPTS) {
+            if (!process.isAlive) throw IllegalStateException("MPV terminó antes de iniciar la reproducción")
+            if (Files.exists(ipcSocket)) return
+            Thread.sleep(IPC_START_INTERVAL_MS)
         }
-        output
+        throw IllegalStateException("MPV no abrió el socket de control")
     }
 
     private fun stopAllLocked() {
@@ -377,21 +408,18 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         standby = null
     }
 
-    private fun stopInstanceLocked(playback: VlcPlayback) {
-        runCatching {
-            playback.commandWriter.apply {
-                write("quit")
-                newLine()
-                flush()
-            }
-        }
-        runCatching { playback.commandWriter.close() }
+    private fun stopInstanceLocked(playback: MpvPlayback) {
+        sendCommand(playback, quitCommand())
         if (playback.process.isAlive) {
             playback.process.destroy()
+            if (!playback.process.waitFor(500, TimeUnit.MILLISECONDS)) {
+                playback.process.destroyForcibly()
+            }
         }
+        runCatching { Files.deleteIfExists(playback.ipcSocket) }
     }
 
-    private fun VlcPlayback.currentPositionMs(): Long {
+    private fun MpvPlayback.currentPositionMs(): Long {
         val currentPosition = if (playing && process.isAlive) {
             positionBaseMs + (System.currentTimeMillis() - positionStartedAtMs).coerceAtLeast(0L)
         } else {
@@ -404,17 +432,15 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         }
     }
 
-    private fun resolveVlcExecutable(): String {
+    private fun resolveMpvExecutable(): String {
         val pathEntries = System.getenv("PATH")
             ?.split(File.pathSeparatorChar)
             .orEmpty()
-        val executable = listOf("cvlc", "vlc").firstNotNullOfOrNull { command ->
-            pathEntries
-                .map { Path.of(it, command) }
-                .firstOrNull { Files.isExecutable(it) }
-                ?.toString()
-        }
-        return executable ?: throw IllegalStateException("No encontré VLC. En Arch instala VLC con: sudo pacman -S vlc")
+        val executable = pathEntries
+            .map { Path.of(it, "mpv") }
+            .firstOrNull { Files.isExecutable(it) }
+            ?.toString()
+        return executable ?: throw IllegalStateException("No encontré MPV. En Arch instala MPV con: sudo pacman -S mpv")
     }
 
     private fun String.toPlayableLocation(): PlayableLocation {
@@ -428,11 +454,22 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         return PlayableLocation(path = path)
     }
 
-    private data class VlcPlayback(
+    private fun setPauseCommand(paused: Boolean): String = "{\"command\":[\"set_property\",\"pause\",$paused]}"
+
+    private fun setVolumeCommand(volumePercent: Int): String = "{\"command\":[\"set_property\",\"volume\",${volumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT)}]}"
+
+    private fun setTimePositionCommand(positionMs: Long): String {
+        val seconds = String.format(Locale.ROOT, "%.3f", positionMs.coerceAtLeast(0L) / 1_000.0)
+        return "{\"command\":[\"set_property\",\"time-pos\",$seconds]}"
+    }
+
+    private fun quitCommand(): String = "{\"command\":[\"quit\"]}"
+
+    private data class MpvPlayback(
         val songId: Long,
         val process: Process,
-        val commandWriter: BufferedWriter,
-        val durationMs: Long,
+        val ipcSocket: Path,
+        var durationMs: Long,
         var positionBaseMs: Long,
         var positionStartedAtMs: Long,
         var playing: Boolean,
@@ -453,16 +490,17 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         return cos(angle).toFloat()
     }
 
-    private fun Int.toVlcVolume(): Int = (coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT) * 2.56f).roundToInt()
-
     private companion object {
         const val MIN_VOLUME_PERCENT = 0
         const val MAX_VOLUME_PERCENT = 100
         const val MAX_DJ_MIX_SECONDS = 8
         const val MIN_DJ_FADE_MS = 1_000L
         const val DJ_FADE_STEPS = 24
-        const val SYSTEM_AUDIO_SYNC_ATTEMPTS = 12
-        const val SYSTEM_AUDIO_SYNC_INTERVAL_MS = 250L
+        const val IPC_START_ATTEMPTS = 100
+        const val IPC_START_INTERVAL_MS = 20L
+        const val IPC_RESPONSE_BUFFER_BYTES = 4_096
+        const val IPC_READ_TIMEOUT_MS = 120L
+        const val IPC_READ_POLL_INTERVAL_MS = 5L
     }
 
     private fun Result<Unit>.mapError(): Result<Unit> = fold(
@@ -470,18 +508,10 @@ class DesktopAudioPlayer : DesktopPlaybackBackend {
         onFailure = { throwable ->
             Result.failure(
                 IllegalStateException(
-                    throwable.message ?: "No se pudo controlar la reproducción",
+                    throwable.message ?: "No se pudo controlar la reproducción con MPV",
                     throwable,
                 ),
             )
         },
     )
 }
-
-data class DesktopPlaybackSnapshot(
-    val isPlaying: Boolean = false,
-    val positionMs: Long = 0L,
-    val durationMs: Long = 0L,
-    val playbackEnded: Boolean = false,
-    val errorMessage: String? = null,
-)
