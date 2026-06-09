@@ -64,6 +64,27 @@ SOFTMUSIC_DESKTOP_BACKEND=mpv ./gradlew :desktop:run
 VLC sigue siendo el backend predeterminado mientras MPV se valida.
 También puedes cambiar el backend desde `Configuración > Backend de audio` en la app desktop.
 
+Para generar una distribucion portable para Linux x86_64, valida para distros que no sean Arch:
+
+```bash
+./gradlew :desktop:packagePortableLinux
+```
+
+El archivo queda en:
+
+```bash
+desktop/build/compose/binaries/main/portable/softmusic-1.1.1-linux-x86_64.tar.gz
+```
+
+Uso en otra distro:
+
+```bash
+tar -xzf softmusic-1.1.1-linux-x86_64.tar.gz
+./SoftMusic/bin/SoftMusic
+```
+
+La distribucion portable incluye el runtime Java necesario. El sistema solo necesita tener instalado VLC para el backend estable, o MPV si se quiere probar el backend experimental.
+
 ## Requisitos
 
 - Android Studio o Gradle instalado.
