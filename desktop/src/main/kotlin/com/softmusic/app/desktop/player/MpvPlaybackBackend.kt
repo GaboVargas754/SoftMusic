@@ -235,13 +235,22 @@ class MpvPlaybackBackend : DesktopPlaybackBackend {
         targetVolumePercent: Int,
         durationMs: Long,
     ) {
+        val initialIncomingVolume = initialIncomingVolume(targetVolumePercent)
+        synchronized(stateLock) {
+            if (active === incoming && incoming.process.isAlive) {
+                setInstanceVolume(incoming, initialIncomingVolume)
+            }
+        }
+
         Thread {
             val steps = DJ_FADE_STEPS
             val stepDelayMs = (durationMs / steps).coerceAtLeast(50L)
             repeat(steps) { step ->
                 Thread.sleep(stepDelayMs)
                 val progress = (step + 1).toFloat() / steps.toFloat()
-                val incomingVolume = (targetVolumePercent * equalPowerIn(progress)).roundToInt().coerceIn(0, targetVolumePercent)
+                val incomingVolume = (initialIncomingVolume + (targetVolumePercent - initialIncomingVolume) * equalPowerIn(progress))
+                    .roundToInt()
+                    .coerceIn(initialIncomingVolume, targetVolumePercent)
                 val outgoingVolume = (targetVolumePercent * equalPowerOut(progress)).roundToInt().coerceIn(0, targetVolumePercent)
 
                 synchronized(stateLock) {
@@ -490,12 +499,21 @@ class MpvPlaybackBackend : DesktopPlaybackBackend {
         return cos(angle).toFloat()
     }
 
+    private fun initialIncomingVolume(targetVolumePercent: Int): Int {
+        val safeVolume = targetVolumePercent.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT)
+        if (safeVolume <= MIN_VOLUME_PERCENT) return MIN_VOLUME_PERCENT
+        return (safeVolume * DJ_INITIAL_INCOMING_VOLUME_RATIO)
+            .roundToInt()
+            .coerceIn(1, safeVolume)
+    }
+
     private companion object {
         const val MIN_VOLUME_PERCENT = 0
         const val MAX_VOLUME_PERCENT = 100
         const val MAX_DJ_MIX_SECONDS = 8
         const val MIN_DJ_FADE_MS = 1_000L
         const val DJ_FADE_STEPS = 24
+        const val DJ_INITIAL_INCOMING_VOLUME_RATIO = 0.15f
         const val IPC_START_ATTEMPTS = 100
         const val IPC_START_INTERVAL_MS = 20L
         const val IPC_RESPONSE_BUFFER_BYTES = 4_096

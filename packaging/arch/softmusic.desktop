@@ -6,4 +6,5 @@ Exec=softmusic
 Icon=softmusic
 Terminal=false
 Categories=Audio;Music;Player;
-StartupWMClass=SoftMusic
+StartupNotify=true
+StartupWMClass=com-softmusic-app-desktop-MainKt

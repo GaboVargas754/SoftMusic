@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,9 +20,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -107,6 +110,9 @@ import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.Song
 import com.softmusic.app.data.orderedSongsFrom
 import com.softmusic.app.desktop.data.DesktopMusicScanner
+import com.softmusic.app.desktop.integration.DesktopMprisActions
+import com.softmusic.app.desktop.integration.DesktopMprisService
+import com.softmusic.app.desktop.integration.DesktopMprisState
 import com.softmusic.app.desktop.player.DesktopPlaybackBackend
 import com.softmusic.app.desktop.player.DesktopPlaybackSnapshot
 import com.softmusic.app.desktop.player.DesktopPlaybackBackendType
@@ -278,8 +284,16 @@ private val GraphiteDesktopColors = DesktopColors(
     highlight = Color(0xFF232D38),
 )
 
-fun main() = application {
-    DesktopApp()
+fun main() {
+    configureDesktopAppIdentity()
+    application {
+        DesktopApp()
+    }
+}
+
+private fun configureDesktopAppIdentity() {
+    System.setProperty("sun.awt.X11.XWMClass", DESKTOP_STARTUP_WM_CLASS)
+    System.setProperty("apple.awt.application.name", "SoftMusic")
 }
 
 @Composable
@@ -313,6 +327,7 @@ private fun ApplicationScope.DesktopApp() {
     val audioPlayer: DesktopPlaybackBackend = remember(backendSelection.type) {
         createDesktopPlaybackBackend(backendSelection.type)
     }
+    val mprisService = remember { DesktopMprisService() }
     var selectedSection by remember { mutableStateOf(DesktopSection.Home) }
     var selectedPlaylistId by remember { mutableStateOf<String?>(null) }
     var newPlaylistName by remember { mutableStateOf("") }
@@ -686,12 +701,19 @@ private fun ApplicationScope.DesktopApp() {
     }
 
     fun closeApplication() {
+        mprisService.close()
         audioPlayer.release()
         exitApplication()
     }
 
     DisposableEffect(audioPlayer) {
-        val shutdownHook = Thread({ audioPlayer.release() }, "SoftMusic-audio-shutdown")
+        val shutdownHook = Thread(
+            {
+                mprisService.close()
+                audioPlayer.release()
+            },
+            "SoftMusic-audio-shutdown",
+        )
         Runtime.getRuntime().addShutdownHook(shutdownHook)
         onDispose {
             runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
@@ -783,6 +805,90 @@ private fun ApplicationScope.DesktopApp() {
         audioPlayer.seekTo(nextPosition)
             .onSuccess { applySnapshot() }
             .onFailure(::handlePlaybackFailure)
+    }
+
+    fun playFromExternalControl() {
+        if (currentSong == null) {
+            togglePlayback()
+            return
+        }
+        if (!isPlaying) {
+            audioPlayer.resume()
+                .onSuccess { applySnapshot() }
+                .onFailure(::handlePlaybackFailure)
+        }
+    }
+
+    fun pauseFromExternalControl() {
+        if (currentSong != null && isPlaying) {
+            audioPlayer.pause()
+                .onSuccess { applySnapshot() }
+                .onFailure(::handlePlaybackFailure)
+        }
+    }
+
+    fun seekByRelativePosition(deltaMs: Long) {
+        val safeDurationMs = (durationMs.takeIf { it > 0L } ?: currentSong?.durationMs ?: 0L).coerceAtLeast(0L)
+        val nextPositionMs = if (safeDurationMs > 0L) {
+            (positionMs + deltaMs).coerceIn(0L, safeDurationMs)
+        } else {
+            (positionMs + deltaMs).coerceAtLeast(0L)
+        }
+        seekToPosition(nextPositionMs)
+    }
+
+    fun canGoNextFromCurrentQueue(): Boolean {
+        return queueSongs().nextQueueMove(
+            sourceSongs = activeSourceQueue,
+            currentSong = currentSong,
+            playbackMode = desktopSettings.playbackMode,
+            manual = true,
+        ) != null
+    }
+
+    DisposableEffect(mprisService) {
+        mprisService.start()
+        onDispose { mprisService.close() }
+    }
+
+    androidx.compose.runtime.SideEffect {
+        mprisService.updateActions(
+            DesktopMprisActions(
+                onPlay = { scope.launch { playFromExternalControl() } },
+                onPause = { scope.launch { pauseFromExternalControl() } },
+                onPlayPause = { scope.launch { togglePlayback() } },
+                onStop = { scope.launch { stopPlayback() } },
+                onNext = { scope.launch { playNextSong(manual = true) } },
+                onPrevious = { scope.launch { playPreviousSong() } },
+                onSeekTo = { position -> scope.launch { seekToPosition(position) } },
+                onSeekBy = { delta -> scope.launch { seekByRelativePosition(delta) } },
+            ),
+        )
+    }
+
+    androidx.compose.runtime.LaunchedEffect(
+        currentSong,
+        isPlaying,
+        positionMs,
+        durationMs,
+        desktopSettings.playbackMode,
+        activeQueue,
+        activeSourceQueue,
+        displayedSongs,
+        songs,
+    ) {
+        mprisService.updateState(
+            DesktopMprisState(
+                song = currentSong,
+                isPlaying = isPlaying,
+                positionMs = positionMs,
+                durationMs = durationMs.takeIf { it > 0L } ?: currentSong?.durationMs ?: 0L,
+                playbackMode = desktopSettings.playbackMode,
+                canGoNext = currentSong != null && canGoNextFromCurrentQueue(),
+                canGoPrevious = currentSong != null,
+                canPlay = currentSong != null || displayedSongs.isNotEmpty() || songs.isNotEmpty(),
+            ),
+        )
     }
 
     val systemDarkTheme = isSystemInDarkTheme()
@@ -928,17 +1034,21 @@ private fun ApplicationScope.DesktopApp() {
                                 selectedPlaylistId?.let { playlistId -> removeSongFromPlaylist(playlistId, songId) }
                             },
                         )
-                        DesktopSection.Settings -> Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(24.dp),
-                        ) {
-                            SettingsPanel(
-                                settings = desktopSettings,
-                                activeBackend = backendSelection.type,
-                                backendOverridden = backendSelection.isOverridden,
-                                onSettingsChange = ::updateSettings,
-                            )
+                        DesktopSection.Settings -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                            val settingsPadding = if (maxWidth < 560.dp || maxHeight < 520.dp) 12.dp else 24.dp
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(settingsPadding),
+                            ) {
+                                SettingsPanel(
+                                    settings = desktopSettings,
+                                    activeBackend = backendSelection.type,
+                                    backendOverridden = backendSelection.isOverridden,
+                                    onSettingsChange = ::updateSettings,
+                                )
+                            }
                         }
                     }
                 },
@@ -1962,12 +2072,15 @@ private fun SettingsPanel(
     onSettingsChange: (DesktopSettings) -> Unit,
 ) {
     val colors = LocalDesktopColors.current
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = colors.card),
-        shape = RoundedCornerShape(22.dp),
-    ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val compact = maxWidth < 520.dp
+        val contentPadding = if (compact) 14.dp else 18.dp
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colors.card),
+            shape = RoundedCornerShape(22.dp),
+        ) {
+            Column(modifier = Modifier.padding(contentPadding)) {
             Text(
                 text = "Configuración",
                 color = colors.text,
@@ -2074,6 +2187,7 @@ private fun SettingsPanel(
                     onSettingsChange(settings.copy(volumePercent = value.toInt().coerceIn(0, 100)))
                 },
             )
+            }
         }
     }
 }
@@ -2085,30 +2199,59 @@ private fun SettingsSwitchRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    val colors = LocalDesktopColors.current
-    Row(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = colors.text,
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                modifier = Modifier.padding(top = 3.dp),
-                text = description,
-                color = colors.muted,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+        if (maxWidth < 420.dp) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                SettingsSwitchText(title = title, description = description)
+                Switch(
+                    modifier = Modifier.align(Alignment.End).padding(top = 6.dp),
+                    checked = checked,
+                    onCheckedChange = onCheckedChange,
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SettingsSwitchText(
+                    title = title,
+                    description = description,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Switch(
+                    checked = checked,
+                    onCheckedChange = onCheckedChange,
+                )
+            }
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
+    }
+}
+
+@Composable
+private fun SettingsSwitchText(
+    title: String,
+    description: String,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalDesktopColors.current
+    Column(modifier = modifier) {
+        Text(
+            text = title,
+            color = colors.text,
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            modifier = Modifier.padding(top = 3.dp),
+            text = description,
+            color = colors.muted,
+            style = MaterialTheme.typography.bodyMedium,
         )
     }
 }
@@ -3474,6 +3617,7 @@ private class AndroidLauncherIconPainter : Painter() {
 }
 
 private const val MAX_PLAYLIST_NAME_LENGTH = 50
+private const val DESKTOP_STARTUP_WM_CLASS = "com-softmusic-app-desktop-MainKt"
 private const val PLAYBACK_START_TIMEOUT_MS = 3_000L
 private const val MIN_DJ_MIX_SECONDS = 5
 private const val MAX_DJ_MIX_SECONDS = 8

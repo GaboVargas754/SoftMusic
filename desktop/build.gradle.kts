@@ -19,17 +19,21 @@ dependencies {
     implementation(compose.desktop.currentOs)
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
+    implementation("com.github.hypfvieh:dbus-java-core:5.2.0")
+    implementation("com.github.hypfvieh:dbus-java-transport-native-unixsocket:5.2.0")
     implementation("net.jthink:jaudiotagger:3.0.1")
 }
 
 compose.desktop {
     application {
         mainClass = "com.softmusic.app.desktop.MainKt"
+        jvmArgs += listOf("-Dsun.awt.X11.XWMClass=com-softmusic-app-desktop-MainKt")
 
         nativeDistributions {
             targetFormats(TargetFormat.AppImage, TargetFormat.Deb, TargetFormat.Rpm)
             packageName = "SoftMusic"
             packageVersion = softMusicPackageVersion
+            modules("jdk.security.auth")
         }
     }
 }

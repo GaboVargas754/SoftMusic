@@ -45,8 +45,11 @@ SoftMusic es un reproductor Android nativo offline inspirado en Spotify.
 - Panel de configuracion desktop con tema sistema/oscuro/claro, caratulas, autoescaneo al iniciar y volumen inicial.
 - Temas desktop equivalentes al telefono: claro, oscuro, noche azul, bosque, atardecer, lavanda y grafito.
 - Modo DJ desktop con crossfade usando dos procesos VLC externos y mezcla configurable entre 5 y 8 segundos.
+- Integracion desktop Linux con MPRIS/DBus para teclas multimedia y controles de reproduccion del entorno de escritorio.
 
 La configuracion desktop se guarda en `$XDG_CONFIG_HOME/SoftMusic/desktop.properties` o `~/.config/SoftMusic/desktop.properties`.
+
+En Linux desktop, SoftMusic publica un reproductor MPRIS (`org.mpris.MediaPlayer2.softmusic`). Esto permite que GNOME, KDE y otros entornos compatibles muestren controles multimedia/notificaciones y envien acciones como reproducir, pausar, anterior, siguiente, detener y buscar posicion.
 
 En Arch Linux instala VLC para que libVLC este disponible:
 
