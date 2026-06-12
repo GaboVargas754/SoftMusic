@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
@@ -83,18 +84,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Path as ComposePath
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -144,7 +139,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import javax.swing.JFileChooser
-import kotlin.math.min
 
 private val LocalDesktopColors = staticCompositionLocalOf { DarkDesktopColors }
 
@@ -157,7 +151,7 @@ private enum class DesktopSection(val label: String) {
 }
 
 private fun DesktopSection.icon(): ImageVector = when (this) {
-    DesktopSection.Home -> Icons.Filled.MusicNote
+    DesktopSection.Home -> Icons.Filled.Home
     DesktopSection.Music -> Icons.Filled.LibraryMusic
     DesktopSection.Favorites -> Icons.Filled.Star
     DesktopSection.Playlists -> Icons.AutoMirrored.Filled.PlaylistAdd
@@ -1135,24 +1129,28 @@ private fun DesktopShell(
     content: @Composable () -> Unit,
     player: @Composable () -> Unit,
 ) {
-    Row(modifier = Modifier.fillMaxSize()) {
-        DesktopSidebar(
-            selectedSection = selectedSection,
-            songCount = songCount,
-            favoriteSongCount = favoriteSongCount,
-            playlistCount = playlistCount,
-            isScanning = isScanning,
-            onSelectSection = onSelectSection,
-        )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxSize(),
-        ) {
-            Box(modifier = Modifier.weight(1f)) {
-                content()
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compactSidebar = maxWidth < 980.dp
+        Row(modifier = Modifier.fillMaxSize()) {
+            DesktopSidebar(
+                selectedSection = selectedSection,
+                songCount = songCount,
+                favoriteSongCount = favoriteSongCount,
+                playlistCount = playlistCount,
+                isScanning = isScanning,
+                compact = compactSidebar,
+                onSelectSection = onSelectSection,
+            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxSize(),
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    content()
+                }
+                player()
             }
-            player()
         }
     }
 }
@@ -1164,36 +1162,42 @@ private fun DesktopSidebar(
     favoriteSongCount: Int,
     playlistCount: Int,
     isScanning: Boolean,
+    compact: Boolean,
     onSelectSection: (DesktopSection) -> Unit,
 ) {
     val colors = LocalDesktopColors.current
     Column(
         modifier = Modifier
-            .width(244.dp)
+            .width(if (compact) 80.dp else 244.dp)
             .fillMaxSize()
             .background(colors.card)
-            .padding(18.dp),
+            .padding(horizontal = if (compact) 12.dp else 18.dp, vertical = 18.dp),
+        horizontalAlignment = if (compact) Alignment.CenterHorizontally else Alignment.Start,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            AppIconMark(size = 46.dp, cornerRadius = 16.dp)
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "SoftMusic",
-                    color = colors.text,
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                )
-                Text(
-                    text = if (isScanning) "Escaneando..." else "$songCount canciones",
-                    color = colors.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+        if (compact) {
+            AppIconMark(size = 42.dp, cornerRadius = 14.dp)
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppIconMark(size = 46.dp, cornerRadius = 16.dp)
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "SoftMusic",
+                        color = colors.text,
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Text(
+                        text = if (isScanning) "Escaneando..." else "$songCount canciones",
+                        color = colors.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(26.dp))
+        Spacer(modifier = Modifier.height(if (compact) 28.dp else 26.dp))
 
         DesktopSection.entries.forEach { section ->
             val detail = when (section) {
@@ -1207,6 +1211,7 @@ private fun DesktopSidebar(
                 section = section,
                 detail = detail,
                 selected = selectedSection == section,
+                compact = compact,
                 onClick = { onSelectSection(section) },
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -1219,9 +1224,30 @@ private fun SidebarItem(
     section: DesktopSection,
     detail: String,
     selected: Boolean,
+    compact: Boolean,
     onClick: () -> Unit,
 ) {
     val colors = LocalDesktopColors.current
+    if (compact) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+                .background(if (selected) colors.highlight else Color.Transparent, RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(16.dp))
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = section.icon(),
+                contentDescription = section.label,
+                tint = if (selected) colors.accent else colors.muted,
+                modifier = Modifier.size(23.dp),
+            )
+        }
+        return
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1231,16 +1257,12 @@ private fun SidebarItem(
             .padding(horizontal = 12.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (section == DesktopSection.Home) {
-            AppIconMark(size = 22.dp, cornerRadius = 7.dp)
-        } else {
-            Icon(
-                imageVector = section.icon(),
-                contentDescription = null,
-                tint = if (selected) colors.accent else colors.muted,
-                modifier = Modifier.size(22.dp),
-            )
-        }
+        Icon(
+            imageVector = section.icon(),
+            contentDescription = null,
+            tint = if (selected) colors.accent else colors.muted,
+            modifier = Modifier.size(22.dp),
+        )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -1279,141 +1301,182 @@ private fun MainMenuWindowContent(
     onOpenSettings: () -> Unit,
 ) {
     val colors = LocalDesktopColors.current
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(28.dp),
-    ) {
-        Header(
-            selectedFolder = selectedFolder,
-            songCount = songCount,
-            isScanning = isScanning,
-            showSettings = false,
-            onSelectFolder = onSelectFolder,
-            onToggleSettings = onOpenSettings,
-        )
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compact = maxWidth < 760.dp
+        val contentPadding = if (compact) 16.dp else 28.dp
+        val cardSpacing = if (compact) 10.dp else 14.dp
 
-        Spacer(modifier = Modifier.height(20.dp))
-
-        preferencesErrorMessage?.let { message ->
-            StatusCard(
-                title = "No se pudieron guardar las preferencias",
-                body = message,
-                accentColor = colors.warning,
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(contentPadding),
+        ) {
+            Header(
+                selectedFolder = selectedFolder,
+                songCount = songCount,
+                isScanning = isScanning,
+                showSettings = false,
+                compact = compact,
+                onSelectFolder = onSelectFolder,
+                onToggleSettings = onOpenSettings,
             )
-            Spacer(modifier = Modifier.height(14.dp))
-        }
 
-        scanErrorMessage?.let { message ->
-            StatusCard(
-                title = "No se pudo escanear",
-                body = message,
-                accentColor = colors.danger,
+            Spacer(modifier = Modifier.height(if (compact) 16.dp else 20.dp))
+
+            preferencesErrorMessage?.let { message ->
+                StatusCard(
+                    title = "No se pudieron guardar las preferencias",
+                    body = message,
+                    accentColor = colors.warning,
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            scanErrorMessage?.let { message ->
+                StatusCard(
+                    title = "No se pudo escanear",
+                    body = message,
+                    accentColor = colors.danger,
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            Text(
+                text = "Accesos rápidos",
+                color = colors.text,
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
             )
-            Spacer(modifier = Modifier.height(14.dp))
-        }
-
-        Text(
-            text = "Biblioteca",
-            color = colors.text,
-            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-        )
-        Text(
-            modifier = Modifier.padding(top = 4.dp),
-            text = "Usa el menú lateral para moverte entre secciones dentro de la misma aplicación.",
-            color = colors.muted,
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            MenuActionCard(
-                modifier = Modifier.weight(1f),
-                title = "Canciones",
-                subtitle = "$visibleSongCount visibles",
-                icon = Icons.Filled.LibraryMusic,
-                onClick = onOpenMusic,
+            Text(
+                modifier = Modifier.padding(top = 4.dp),
+                text = "Elige una sección para continuar con tu biblioteca local.",
+                color = colors.muted,
+                style = MaterialTheme.typography.bodyMedium,
             )
-            MenuActionCard(
-                modifier = Modifier.weight(1f),
-                title = "Favoritos",
-                subtitle = if (favoriteSongCount == 1) "1 favorita" else "$favoriteSongCount favoritas",
-                icon = Icons.Filled.Star,
-                onClick = onOpenFavorites,
-            )
-        }
 
-        Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(if (compact) 14.dp else 18.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            MenuActionCard(
-                modifier = Modifier.weight(1f),
-                title = "Playlists",
-                subtitle = if (playlistCount == 1) "1 playlist" else "$playlistCount playlists",
-                icon = Icons.AutoMirrored.Filled.PlaylistAdd,
-                onClick = onOpenPlaylists,
-            )
-            MenuActionCard(
-                modifier = Modifier.weight(1f),
-                title = "Configuración",
-                subtitle = "Tema y reproducción",
-                icon = Icons.Filled.Settings,
-                onClick = onOpenSettings,
-            )
-        }
+            if (compact) {
+                Column(verticalArrangement = Arrangement.spacedBy(cardSpacing)) {
+                    MenuActionCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        title = "Canciones",
+                        subtitle = "$visibleSongCount visibles",
+                        icon = Icons.Filled.LibraryMusic,
+                        onClick = onOpenMusic,
+                    )
+                    MenuActionCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        title = "Favoritos",
+                        subtitle = if (favoriteSongCount == 1) "1 favorita" else "$favoriteSongCount favoritas",
+                        icon = Icons.Filled.Star,
+                        onClick = onOpenFavorites,
+                    )
+                    MenuActionCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        title = "Playlists",
+                        subtitle = if (playlistCount == 1) "1 playlist" else "$playlistCount playlists",
+                        icon = Icons.AutoMirrored.Filled.PlaylistAdd,
+                        onClick = onOpenPlaylists,
+                    )
+                    MenuActionCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        title = "Configuración",
+                        subtitle = "Tema y reproducción",
+                        icon = Icons.Filled.Settings,
+                        onClick = onOpenSettings,
+                    )
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(cardSpacing)) {
+                    MenuActionCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Canciones",
+                        subtitle = "$visibleSongCount visibles",
+                        icon = Icons.Filled.LibraryMusic,
+                        onClick = onOpenMusic,
+                    )
+                    MenuActionCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Favoritos",
+                        subtitle = if (favoriteSongCount == 1) "1 favorita" else "$favoriteSongCount favoritas",
+                        icon = Icons.Filled.Star,
+                        onClick = onOpenFavorites,
+                    )
+                }
 
-        Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.height(cardSpacing))
 
-        playbackErrorMessage?.let { message ->
-            StatusCard(
-                title = "Reproductor",
-                body = message,
-                accentColor = colors.warning,
-            )
-            Spacer(modifier = Modifier.height(14.dp))
-        }
+                Row(horizontalArrangement = Arrangement.spacedBy(cardSpacing)) {
+                    MenuActionCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Playlists",
+                        subtitle = if (playlistCount == 1) "1 playlist" else "$playlistCount playlists",
+                        icon = Icons.AutoMirrored.Filled.PlaylistAdd,
+                        onClick = onOpenPlaylists,
+                    )
+                    MenuActionCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Configuración",
+                        subtitle = "Tema y reproducción",
+                        icon = Icons.Filled.Settings,
+                        onClick = onOpenSettings,
+                    )
+                }
+            }
 
-        currentSong?.let { song ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = colors.card),
-                shape = RoundedCornerShape(24.dp),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+            Spacer(modifier = Modifier.height(if (compact) 20.dp else 28.dp))
+
+            playbackErrorMessage?.let { message ->
+                StatusCard(
+                    title = "Reproductor",
+                    body = message,
+                    accentColor = colors.warning,
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            currentSong?.let { song ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = colors.card),
+                    shape = RoundedCornerShape(24.dp),
                 ) {
-                    SongArtwork(song = song, showArtwork = showArtwork)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Reproduciendo ahora",
-                            color = colors.subtle,
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                        Text(
-                            text = song.title,
-                            color = colors.text,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        )
-                        Text(
-                            text = song.artist,
-                            color = colors.muted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SongArtwork(song = song, showArtwork = showArtwork)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Reproduciendo ahora",
+                                color = colors.subtle,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Text(
+                                text = song.title,
+                                color = colors.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            )
+                            Text(
+                                text = song.artist,
+                                color = colors.muted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                     }
                 }
             }
         }
+        }
     }
-}
 
 @Composable
 private fun MenuActionCard(
@@ -1733,11 +1796,14 @@ private fun PlaylistsWindowContent(
     onRemoveSongFromPlaylist: (Long) -> Unit,
 ) {
     val colors = LocalDesktopColors.current
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-    ) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compact = maxWidth < 820.dp
+        val contentPadding = if (compact) 16.dp else 24.dp
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding),
+        ) {
         Text(
             text = "Playlists",
             color = colors.text,
@@ -1758,26 +1824,51 @@ private fun PlaylistsWindowContent(
             shape = RoundedCornerShape(22.dp),
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    OutlinedTextField(
-                        modifier = Modifier.weight(1f),
-                        value = newPlaylistName,
-                        onValueChange = onNewPlaylistNameChange,
-                        singleLine = true,
-                        label = { Text("Nueva playlist") },
-                    )
-                    Button(onClick = onCreatePlaylist, enabled = newPlaylistName.isNotBlank()) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
+                if (compact) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            modifier = Modifier.fillMaxWidth(),
+                            value = newPlaylistName,
+                            onValueChange = onNewPlaylistNameChange,
+                            singleLine = true,
+                            label = { Text("Nueva playlist") },
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Crear")
+                        Button(
+                            modifier = Modifier.align(Alignment.End).padding(top = 10.dp),
+                            onClick = onCreatePlaylist,
+                            enabled = newPlaylistName.isNotBlank(),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Crear")
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedTextField(
+                            modifier = Modifier.weight(1f),
+                            value = newPlaylistName,
+                            onValueChange = onNewPlaylistNameChange,
+                            singleLine = true,
+                            label = { Text("Nueva playlist") },
+                        )
+                        Button(onClick = onCreatePlaylist, enabled = newPlaylistName.isNotBlank()) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Crear")
+                        }
                     }
                 }
 
@@ -1828,20 +1919,18 @@ private fun PlaylistsWindowContent(
             return@Column
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
+        if (compact) {
             Card(
-                modifier = Modifier.width(300.dp),
+                modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = colors.card),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(22.dp),
             ) {
-                LazyColumn(modifier = Modifier.fillMaxSize().padding(vertical = 10.dp)) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     items(playlists, key = { it.id }) { playlist ->
-                        PlaylistMenuRow(
+                        PlaylistSelectorChip(
                             playlist = playlist,
                             selected = selectedPlaylist?.id == playlist.id,
                             onClick = { onSelectPlaylist(playlist.id) },
@@ -1849,83 +1938,197 @@ private fun PlaylistsWindowContent(
                     }
                 }
             }
-
-            Column(modifier = Modifier.weight(1f)) {
-                if (selectedPlaylist == null) {
-                    Card(
-                        modifier = Modifier.fillMaxSize(),
-                        colors = CardDefaults.cardColors(containerColor = colors.card),
-                        shape = RoundedCornerShape(28.dp),
-                    ) {
-                        EmptyState(
-                            title = "Selecciona una playlist",
-                            body = "Elige una lista de la izquierda para ver sus canciones.",
-                        )
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = selectedPlaylist.name,
-                                color = colors.text,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            )
-                            Text(
-                                text = if (selectedPlaylistSongs.size == 1) "1 canción" else "${selectedPlaylistSongs.size} canciones",
-                                color = colors.muted,
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
-                        TextButton(onClick = onDeleteSelectedPlaylist) {
-                            Icon(
-                                imageVector = Icons.Filled.Delete,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Eliminar")
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    if (!isScanning && selectedPlaylistSongs.isEmpty()) {
-                        Card(
-                            modifier = Modifier.fillMaxSize(),
-                            colors = CardDefaults.cardColors(containerColor = colors.card),
-                            shape = RoundedCornerShape(28.dp),
-                        ) {
-                            EmptyState(
-                                title = "Playlist vacía",
-                                body = "Reproduce una canción y agrégala desde el panel superior.",
+            Spacer(modifier = Modifier.height(12.dp))
+            PlaylistDetailContent(
+                modifier = Modifier.weight(1f),
+                selectedPlaylist = selectedPlaylist,
+                selectedPlaylistSongs = selectedPlaylistSongs,
+                currentSong = currentSong,
+                favoriteSongIds = favoriteSongIds,
+                playlists = playlists,
+                isScanning = isScanning,
+                hasSelectedFolder = hasSelectedFolder,
+                showArtwork = showArtwork,
+                emptySelectionBody = "Elige una playlist de arriba para ver sus canciones.",
+                onDeleteSelectedPlaylist = onDeleteSelectedPlaylist,
+                onPlaySong = onPlaySong,
+                onToggleFavorite = onToggleFavorite,
+                onPlayNext = onPlayNext,
+                onPlayAtEnd = onPlayAtEnd,
+                onAddSongToPlaylist = onAddSongToPlaylist,
+                onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Card(
+                    modifier = Modifier.width(300.dp),
+                    colors = CardDefaults.cardColors(containerColor = colors.card),
+                    shape = RoundedCornerShape(24.dp),
+                ) {
+                    LazyColumn(modifier = Modifier.fillMaxSize().padding(vertical = 10.dp)) {
+                        items(playlists, key = { it.id }) { playlist ->
+                            PlaylistMenuRow(
+                                playlist = playlist,
+                                selected = selectedPlaylist?.id == playlist.id,
+                                onClick = { onSelectPlaylist(playlist.id) },
                             )
                         }
-                    } else {
-                        LibraryContent(
-                            modifier = Modifier.weight(1f),
-                            songs = selectedPlaylistSongs,
-                            isScanning = isScanning,
-                            hasSelectedFolder = hasSelectedFolder,
-                            currentSong = currentSong,
-                            favoriteSongIds = favoriteSongIds,
-                            playlists = playlists,
-                            selectedPlaylist = selectedPlaylist,
-                            libraryView = DesktopLibraryView.Songs,
-                            showArtwork = showArtwork,
-                            onPlaySong = onPlaySong,
-                            onPlaySongGroup = { song, _ -> onPlaySong(song) },
-                            onToggleFavorite = onToggleFavorite,
-                            onPlayNext = onPlayNext,
-                            onPlayAtEnd = onPlayAtEnd,
-                            onAddSongToPlaylist = onAddSongToPlaylist,
-                            onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
-                        )
                     }
                 }
+
+                PlaylistDetailContent(
+                    modifier = Modifier.weight(1f),
+                    selectedPlaylist = selectedPlaylist,
+                    selectedPlaylistSongs = selectedPlaylistSongs,
+                    currentSong = currentSong,
+                    favoriteSongIds = favoriteSongIds,
+                    playlists = playlists,
+                    isScanning = isScanning,
+                    hasSelectedFolder = hasSelectedFolder,
+                    showArtwork = showArtwork,
+                    emptySelectionBody = "Elige una lista de la izquierda para ver sus canciones.",
+                    onDeleteSelectedPlaylist = onDeleteSelectedPlaylist,
+                    onPlaySong = onPlaySong,
+                    onToggleFavorite = onToggleFavorite,
+                    onPlayNext = onPlayNext,
+                    onPlayAtEnd = onPlayAtEnd,
+                    onAddSongToPlaylist = onAddSongToPlaylist,
+                    onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
+                )
+            }
+        }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistSelectorChip(
+    playlist: MusicPlaylist,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    @Composable
+    fun Content() {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+
+    if (selected) {
+        Button(onClick = onClick) {
+            Content()
+        }
+    } else {
+        OutlinedButton(onClick = onClick) {
+            Content()
+        }
+    }
+}
+
+@Composable
+private fun PlaylistDetailContent(
+    modifier: Modifier,
+    selectedPlaylist: MusicPlaylist?,
+    selectedPlaylistSongs: List<Song>,
+    currentSong: Song?,
+    favoriteSongIds: Set<Long>,
+    playlists: List<MusicPlaylist>,
+    isScanning: Boolean,
+    hasSelectedFolder: Boolean,
+    showArtwork: Boolean,
+    emptySelectionBody: String,
+    onDeleteSelectedPlaylist: () -> Unit,
+    onPlaySong: (Song) -> Unit,
+    onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
+    onAddSongToPlaylist: (String, Long) -> Unit,
+    onRemoveSongFromPlaylist: (Long) -> Unit,
+) {
+    val colors = LocalDesktopColors.current
+    Column(modifier = modifier) {
+        if (selectedPlaylist == null) {
+            Card(
+                modifier = Modifier.fillMaxSize(),
+                colors = CardDefaults.cardColors(containerColor = colors.card),
+                shape = RoundedCornerShape(28.dp),
+            ) {
+                EmptyState(
+                    title = "Selecciona una playlist",
+                    body = emptySelectionBody,
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = selectedPlaylist.name,
+                        color = colors.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    )
+                    Text(
+                        text = if (selectedPlaylistSongs.size == 1) "1 canción" else "${selectedPlaylistSongs.size} canciones",
+                        color = colors.muted,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                TextButton(onClick = onDeleteSelectedPlaylist) {
+                    Icon(
+                        imageVector = Icons.Filled.Delete,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Eliminar")
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            if (!isScanning && selectedPlaylistSongs.isEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxSize(),
+                    colors = CardDefaults.cardColors(containerColor = colors.card),
+                    shape = RoundedCornerShape(28.dp),
+                ) {
+                    EmptyState(
+                        title = "Playlist vacía",
+                        body = "Reproduce una canción y agrégala desde el panel superior.",
+                    )
+                }
+            } else {
+                LibraryContent(
+                    modifier = Modifier.weight(1f),
+                    songs = selectedPlaylistSongs,
+                    isScanning = isScanning,
+                    hasSelectedFolder = hasSelectedFolder,
+                    currentSong = currentSong,
+                    favoriteSongIds = favoriteSongIds,
+                    playlists = playlists,
+                    selectedPlaylist = selectedPlaylist,
+                    libraryView = DesktopLibraryView.Songs,
+                    showArtwork = showArtwork,
+                    onPlaySong = onPlaySong,
+                    onPlaySongGroup = { song, _ -> onPlaySong(song) },
+                    onToggleFavorite = onToggleFavorite,
+                    onPlayNext = onPlayNext,
+                    onPlayAtEnd = onPlayAtEnd,
+                    onAddSongToPlaylist = onAddSongToPlaylist,
+                    onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
+                )
             }
         }
     }
@@ -1983,66 +2186,136 @@ private fun Header(
     songCount: Int,
     isScanning: Boolean,
     showSettings: Boolean,
+    compact: Boolean,
     onSelectFolder: () -> Unit,
     onToggleSettings: () -> Unit,
 ) {
     val colors = LocalDesktopColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    val folderLabel = if (selectedFolder == null) "Biblioteca sin carpeta" else "Carpeta activa"
+    val folderText = selectedFolder?.toString() ?: "Selecciona una carpeta para crear tu biblioteca local."
+    if (compact) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            HeaderFolderInfo(
+                folderLabel = folderLabel,
+                folderText = folderText,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            HeaderActions(
+                selectedFolder = selectedFolder,
+                songCount = songCount,
+                isScanning = isScanning,
+                showSettings = showSettings,
+                compact = true,
+                onSelectFolder = onSelectFolder,
+                onToggleSettings = onToggleSettings,
+            )
+        }
+    } else {
         Row(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AppIconMark(size = 54.dp, cornerRadius = 18.dp)
-            Spacer(modifier = Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "SoftMusic Desktop",
-                    color = colors.text,
-                    style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
-                )
-                Text(
-                    modifier = Modifier.padding(top = 6.dp),
-                    text = selectedFolder?.toString() ?: "Selecciona una carpeta para crear tu biblioteca local.",
-                    color = colors.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+            HeaderFolderInfo(
+                folderLabel = folderLabel,
+                folderText = folderText,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(modifier = Modifier.width(20.dp))
+            HeaderActions(
+                selectedFolder = selectedFolder,
+                songCount = songCount,
+                isScanning = isScanning,
+                showSettings = showSettings,
+                compact = false,
+                onSelectFolder = onSelectFolder,
+                onToggleSettings = onToggleSettings,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HeaderFolderInfo(
+    folderLabel: String,
+    folderText: String,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalDesktopColors.current
+    Column(modifier = modifier) {
+        Text(
+            text = folderLabel,
+            color = colors.subtle,
+            style = MaterialTheme.typography.labelLarge,
+        )
+        Text(
+            modifier = Modifier.padding(top = 4.dp),
+            text = folderText,
+            color = colors.text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+        )
+    }
+}
+
+@Composable
+private fun HeaderActions(
+    selectedFolder: Path?,
+    songCount: Int,
+    isScanning: Boolean,
+    showSettings: Boolean,
+    compact: Boolean,
+    onSelectFolder: () -> Unit,
+    onToggleSettings: () -> Unit,
+) {
+    @Composable
+    fun ActionsContent() {
+        SummaryPill(text = if (songCount == 1) "1 canción" else "$songCount canciones")
+        OutlinedButton(onClick = onToggleSettings) {
+            Icon(
+                imageVector = Icons.Filled.Settings,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(if (showSettings) "Ocultar ajustes" else "Configuración")
+        }
+        Button(
+            enabled = !isScanning,
+            onClick = onSelectFolder,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.FolderOpen,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(if (selectedFolder == null) "Seleccionar carpeta" else "Cambiar carpeta")
+        }
+    }
+
+    if (compact) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ActionsContent()
+                }
             }
         }
-
-        Spacer(modifier = Modifier.width(20.dp))
-
+    } else {
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SummaryPill(text = if (songCount == 1) "1 canción" else "$songCount canciones")
-            OutlinedButton(onClick = onToggleSettings) {
-                Icon(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(if (showSettings) "Ocultar ajustes" else "Configuración")
-            }
-            Button(
-                enabled = !isScanning,
-                onClick = onSelectFolder,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.FolderOpen,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(if (selectedFolder == null) "Seleccionar carpeta" else "Cambiar carpeta")
-            }
+            ActionsContent()
         }
     }
 }
@@ -2671,55 +2944,79 @@ private fun SongList(
     onRemoveSongFromPlaylist: (Long) -> Unit,
 ) {
     val colors = LocalDesktopColors.current
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                modifier = Modifier.weight(1f),
-                text = "Canción",
-                color = colors.muted,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(
-                modifier = Modifier.weight(0.58f),
-                text = "Álbum",
-                color = colors.muted,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(
-                modifier = Modifier.width(196.dp),
-                text = "Acciones",
-                color = colors.muted,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(
-                modifier = Modifier.width(76.dp),
-                text = "Duración",
-                color = colors.muted,
-                style = MaterialTheme.typography.labelLarge,
-            )
-        }
-        HorizontalDivider(color = colors.divider)
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(songs, key = { it.id }) { song ->
-                SongRow(
-                    song = song,
-                    isCurrent = song.id == currentSong?.id,
-                    isFavorite = song.id in favoriteSongIds,
-                    playlists = playlists,
-                    selectedPlaylist = selectedPlaylist,
-                    showArtwork = showArtwork,
-                    onPlaySong = onPlaySong,
-                    onToggleFavorite = onToggleFavorite,
-                    onPlayNext = onPlayNext,
-                    onPlayAtEnd = onPlayAtEnd,
-                    onAddSongToPlaylist = onAddSongToPlaylist,
-                    onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
-                )
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val compact = maxWidth < 760.dp
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (!compact) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        modifier = Modifier.weight(1f),
+                        text = "Canción",
+                        color = colors.muted,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        modifier = Modifier.weight(0.58f),
+                        text = "Álbum",
+                        color = colors.muted,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        modifier = Modifier.width(196.dp),
+                        text = "Acciones",
+                        color = colors.muted,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Text(
+                        modifier = Modifier.width(76.dp),
+                        text = "Duración",
+                        color = colors.muted,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+                HorizontalDivider(color = colors.divider)
+            }
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(songs, key = { it.id }) { song ->
+                    val isCurrent = song.id == currentSong?.id
+                    val isFavorite = song.id in favoriteSongIds
+                    if (compact) {
+                        SongCompactRow(
+                            song = song,
+                            isCurrent = isCurrent,
+                            isFavorite = isFavorite,
+                            playlists = playlists,
+                            selectedPlaylist = selectedPlaylist,
+                            showArtwork = showArtwork,
+                            onPlaySong = onPlaySong,
+                            onToggleFavorite = onToggleFavorite,
+                            onPlayNext = onPlayNext,
+                            onPlayAtEnd = onPlayAtEnd,
+                            onAddSongToPlaylist = onAddSongToPlaylist,
+                            onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
+                        )
+                    } else {
+                        SongRow(
+                            song = song,
+                            isCurrent = isCurrent,
+                            isFavorite = isFavorite,
+                            playlists = playlists,
+                            selectedPlaylist = selectedPlaylist,
+                            showArtwork = showArtwork,
+                            onPlaySong = onPlaySong,
+                            onToggleFavorite = onToggleFavorite,
+                            onPlayNext = onPlayNext,
+                            onPlayAtEnd = onPlayAtEnd,
+                            onAddSongToPlaylist = onAddSongToPlaylist,
+                            onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
+                        )
+                    }
+                }
             }
         }
     }
@@ -2829,6 +3126,83 @@ private fun SongRow(
                 text = song.durationMs.formatSongDuration(),
                 color = colors.muted,
                 style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        HorizontalDivider(color = colors.divider)
+    }
+}
+
+@Composable
+private fun SongCompactRow(
+    song: Song,
+    isCurrent: Boolean,
+    isFavorite: Boolean,
+    playlists: List<MusicPlaylist>,
+    selectedPlaylist: MusicPlaylist?,
+    showArtwork: Boolean,
+    onPlaySong: (Song) -> Unit,
+    onToggleFavorite: (Long) -> Unit,
+    onPlayNext: (Song) -> Unit,
+    onPlayAtEnd: (Song) -> Unit,
+    onAddSongToPlaylist: (String, Long) -> Unit,
+    onRemoveSongFromPlaylist: (Long) -> Unit,
+) {
+    val colors = LocalDesktopColors.current
+    val metadata = listOf(song.artist, song.album)
+        .filter { it.isNotBlank() }
+        .joinToString(" • ")
+        .ifBlank { song.folderName }
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(if (isCurrent) colors.highlight else Color.Transparent)
+                .clickable { onPlaySong(song) }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SongArtwork(song = song, showArtwork = showArtwork, size = 40.dp)
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = song.title,
+                    color = if (isCurrent) colors.accent else colors.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                )
+                Text(
+                    modifier = Modifier.padding(top = 3.dp),
+                    text = metadata,
+                    color = colors.subtle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    modifier = Modifier.padding(top = 3.dp),
+                    text = song.durationMs.formatSongDuration(),
+                    color = colors.muted,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            IconButton(onClick = { onToggleFavorite(song.id) }) {
+                Icon(
+                    imageVector = if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+                    contentDescription = if (isFavorite) "Quitar de favoritos" else "Agregar a favoritos",
+                    tint = if (isFavorite) colors.danger else colors.muted,
+                )
+            }
+            SongActionsButton(
+                song = song,
+                isFavorite = isFavorite,
+                playlists = playlists,
+                selectedPlaylist = selectedPlaylist,
+                onToggleFavorite = onToggleFavorite,
+                onPlayNext = onPlayNext,
+                onPlayAtEnd = onPlayAtEnd,
+                onAddSongToPlaylist = onAddSongToPlaylist,
+                onRemoveSongFromPlaylist = onRemoveSongFromPlaylist,
             )
         }
         HorizontalDivider(color = colors.divider)
@@ -3095,7 +3469,21 @@ private fun PlayerBar(
         colors = CardDefaults.cardColors(containerColor = colors.card),
         shape = RoundedCornerShape(24.dp),
     ) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            val compact = maxWidth < 620.dp
+            val horizontalPadding = if (compact) 14.dp else 20.dp
+            val verticalPadding = if (compact) 12.dp else 16.dp
+            val artworkSize = if (compact) 44.dp else 56.dp
+            val artworkSpacing = if (compact) 10.dp else 14.dp
+            val controlSize = if (compact) 42.dp else 48.dp
+            val controlIconSize = if (compact) 24.dp else 28.dp
+            val secondaryIconSize = if (compact) 23.dp else 26.dp
+            val playSize = if (compact) 50.dp else 56.dp
+            val playIconSize = if (compact) 28.dp else 30.dp
+            val controlSpacing = if (compact) 6.dp else 12.dp
+            val sliderPadding = if (compact) 8.dp else 12.dp
+
+        Column(modifier = Modifier.padding(horizontal = horizontalPadding, vertical = verticalPadding)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -3104,9 +3492,9 @@ private fun PlayerBar(
                     SongArtwork(
                         song = currentSong,
                         showArtwork = showArtwork,
-                        size = 56.dp,
+                        size = artworkSize,
                     )
-                    Spacer(modifier = Modifier.width(14.dp))
+                    Spacer(modifier = Modifier.width(artworkSpacing))
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -3135,7 +3523,7 @@ private fun PlayerBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(controlSize),
                     onClick = { showSongDetails = true },
                     enabled = currentSong != null,
                 ) {
@@ -3143,12 +3531,12 @@ private fun PlayerBar(
                         imageVector = Icons.Filled.Info,
                         contentDescription = "Ver detalles de la canción",
                         tint = if (currentSong != null) colors.text else colors.subtle.copy(alpha = 0.55f),
-                        modifier = Modifier.size(26.dp),
+                        modifier = Modifier.size(secondaryIconSize),
                     )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(controlSpacing))
                 IconButton(
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(controlSize),
                     onClick = onPrevious,
                     enabled = currentSong != null,
                 ) {
@@ -3156,12 +3544,12 @@ private fun PlayerBar(
                         imageVector = Icons.Filled.SkipPrevious,
                         contentDescription = "Anterior",
                         tint = if (currentSong != null) colors.text else colors.subtle.copy(alpha = 0.55f),
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(controlIconSize),
                     )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(controlSpacing))
                 Button(
-                    modifier = Modifier.size(56.dp),
+                    modifier = Modifier.size(playSize),
                     shape = CircleShape,
                     contentPadding = PaddingValues(0.dp),
                     onClick = onTogglePlayPause,
@@ -3169,12 +3557,12 @@ private fun PlayerBar(
                     Icon(
                         imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         contentDescription = if (isPlaying) "Pausar" else "Reproducir",
-                        modifier = Modifier.size(30.dp),
+                        modifier = Modifier.size(playIconSize),
                     )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(controlSpacing))
                 IconButton(
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(controlSize),
                     onClick = onNext,
                     enabled = currentSong != null,
                 ) {
@@ -3182,12 +3570,12 @@ private fun PlayerBar(
                         imageVector = Icons.Filled.SkipNext,
                         contentDescription = "Siguiente",
                         tint = if (currentSong != null) colors.text else colors.subtle.copy(alpha = 0.55f),
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(controlIconSize),
                     )
                 }
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(controlSpacing))
                 IconButton(
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(controlSize),
                     onClick = { showPlaybackQueue = true },
                     enabled = currentSong != null || playbackQueue.isNotEmpty(),
                 ) {
@@ -3195,7 +3583,7 @@ private fun PlayerBar(
                         imageVector = Icons.AutoMirrored.Filled.QueueMusic,
                         contentDescription = "Ver cola de reproducción",
                         tint = if (currentSong != null || playbackQueue.isNotEmpty()) colors.text else colors.subtle.copy(alpha = 0.55f),
-                        modifier = Modifier.size(26.dp),
+                        modifier = Modifier.size(secondaryIconSize),
                     )
                 }
             }
@@ -3214,7 +3602,7 @@ private fun PlayerBar(
                 Slider(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = sliderPadding),
                     value = if (durationMs > 0L) positionMs.toFloat() / durationMs.toFloat() else 0f,
                     enabled = currentSong != null && durationMs > 0L,
                     onValueChange = { progress ->
@@ -3232,25 +3620,50 @@ private fun PlayerBar(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Modo",
-                    color = colors.subtle,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                PlaybackMode.entries.forEach { mode ->
-                    FilterButton(
-                        label = mode.shortDesktopLabel(),
-                        selected = playbackMode == mode,
-                        onClick = { onPlaybackModeChange(mode) },
-                        icon = mode.icon(),
+            if (compact) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    item {
+                        Text(
+                            text = "Modo",
+                            color = colors.subtle,
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier.padding(top = 10.dp),
+                        )
+                    }
+                    items(PlaybackMode.entries, key = { it.name }) { mode ->
+                        FilterButton(
+                            label = mode.shortDesktopLabel(),
+                            selected = playbackMode == mode,
+                            onClick = { onPlaybackModeChange(mode) },
+                            icon = mode.icon(),
+                        )
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Modo",
+                        color = colors.subtle,
+                        style = MaterialTheme.typography.labelMedium,
                     )
+                    PlaybackMode.entries.forEach { mode ->
+                        FilterButton(
+                            label = mode.shortDesktopLabel(),
+                            selected = playbackMode == mode,
+                            onClick = { onPlaybackModeChange(mode) },
+                            icon = mode.icon(),
+                        )
+                    }
                 }
             }
+        }
         }
     }
 }
@@ -3559,64 +3972,15 @@ private fun String.loadArtworkBitmap(): ImageBitmap? = runCatching {
     SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap()
 }.getOrNull()
 
-private fun loadDesktopAppIconPainter(): Painter = AndroidLauncherIconPainter()
-
-private class AndroidLauncherIconPainter : Painter() {
-    override val intrinsicSize: Size = Size(ANDROID_ICON_VIEWPORT, ANDROID_ICON_VIEWPORT)
-
-    override fun DrawScope.onDraw() {
-        val side = min(size.width, size.height)
-        val left = (size.width - side) / 2f
-        val top = (size.height - side) / 2f
-        val scale = side / ANDROID_ICON_VIEWPORT
-
-        withTransform({
-            translate(left, top)
-            scale(scale, scale, pivot = Offset.Zero)
-        }) {
-            drawRect(
-                color = ANDROID_ICON_BACKGROUND,
-                size = Size(ANDROID_ICON_VIEWPORT, ANDROID_ICON_VIEWPORT),
-            )
-            drawCircle(
-                brush = ANDROID_ICON_GRADIENT,
-                radius = 44f,
-                center = Offset(54f, 54f),
-            )
-            drawPath(path = noteStemPath, color = ANDROID_ICON_FOREGROUND)
-            drawPath(path = noteBarPath, color = ANDROID_ICON_FOREGROUND)
-            drawPath(path = noteRightPath, color = ANDROID_ICON_FOREGROUND)
-        }
-    }
-
-    private companion object {
-        const val ANDROID_ICON_VIEWPORT = 108f
-        val ANDROID_ICON_BACKGROUND = Color(0xFF080A08)
-        val ANDROID_ICON_FOREGROUND = Color(0xFFE6E8EF)
-        val ANDROID_ICON_GRADIENT = Brush.linearGradient(
-            colorStops = arrayOf(
-                0f to Color(0xFFFF3D81),
-                0.28f to Color(0xFFFFB000),
-                0.55f to Color(0xFF28E66D),
-                0.78f to Color(0xFF18B8FF),
-                1f to Color(0xFF7C4DFF),
-            ),
-            start = Offset(14f, 16f),
-            end = Offset(92f, 90f),
-        )
-        val noteStemPath: ComposePath = PathParser()
-            .parsePathString("M39,30h10v34.5c0,6.4 -5.5,11.5 -12.5,11.5S24,70.9 24,64.5 29.5,53 36.5,53c2,0 3.8,0.4 5.5,1.2V30z")
-            .toPath()
-        val noteBarPath: ComposePath = PathParser()
-            .parsePathString("M49,30h29v10H49z")
-            .toPath()
-        val noteRightPath: ComposePath = PathParser()
-            .parsePathString("M68,30h10v43c0,6.1 -5.6,11 -12.5,11S53,79.1 53,73 58.6,62 65.5,62c1.9,0 3.7,0.4 5.5,1.1V30z")
-            .toPath()
-    }
+private fun loadDesktopAppIconPainter(): Painter {
+    val bytes = checkNotNull(object {}.javaClass.getResourceAsStream("/$DESKTOP_APP_ICON_RESOURCE")) {
+        "Missing desktop app icon resource: $DESKTOP_APP_ICON_RESOURCE"
+    }.use { it.readBytes() }
+    return BitmapPainter(SkiaImage.makeFromEncoded(bytes).toComposeImageBitmap())
 }
 
 private const val MAX_PLAYLIST_NAME_LENGTH = 50
+private const val DESKTOP_APP_ICON_RESOURCE = "favicon.png"
 private const val DESKTOP_STARTUP_WM_CLASS = "com-softmusic-app-desktop-MainKt"
 private const val PLAYBACK_START_TIMEOUT_MS = 3_000L
 private const val MIN_DJ_MIX_SECONDS = 5

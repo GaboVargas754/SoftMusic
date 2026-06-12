@@ -1,14 +1,14 @@
 # Maintainer: SoftMusic local package
 pkgname=softmusic
 pkgver=1.1.1
-pkgrel=6
+pkgrel=11
 pkgdesc="Reproductor de musica local offline con Compose Desktop"
 arch=('x86_64')
 license=('custom')
 depends=('vlc' 'hicolor-icon-theme')
 optdepends=('mpv: backend de reproduccion experimental alternativo')
 makedepends=('jdk17-openjdk')
-source=('softmusic.desktop' 'softmusic.svg')
+source=('softmusic.desktop' 'softmusic.png')
 sha256sums=('SKIP' 'SKIP')
 options=('!strip')
 
@@ -46,5 +46,5 @@ package() {
   ln -s /opt/softmusic/bin/SoftMusic "$pkgdir/usr/bin/softmusic"
 
   install -Dm644 "$srcdir/softmusic.desktop" "$pkgdir/usr/share/applications/softmusic.desktop"
-  install -Dm644 "$srcdir/softmusic.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/softmusic.svg"
+  install -Dm644 "$srcdir/softmusic.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/softmusic.png"
 }

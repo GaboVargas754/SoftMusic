@@ -34,6 +34,9 @@ compose.desktop {
             packageName = "SoftMusic"
             packageVersion = softMusicPackageVersion
             modules("jdk.security.auth")
+            linux {
+                iconFile.set(project.file("src/main/resources/favicon.png"))
+            }
         }
     }
 }

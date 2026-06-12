@@ -1,0 +1,1037 @@
+INFORME GENERAL DE LA APLICACION SOFTMUSIC
+Fecha de analisis: 2026-06-11
+Proyecto: /srv/http/SoftMusic
+
+============================================================
+1. RESUMEN EJECUTIVO
+============================================================
+
+SoftMusic es una aplicacion de reproduccion musical local/offline.
+El proyecto contiene dos versiones principales:
+
+- Version movil Android nativa.
+- Version desktop para Linux/PC.
+
+La aplicacion esta pensada para usuarios que quieren escuchar musica
+almacenada localmente en su dispositivo, sin depender de streaming,
+cuentas externas o conexion permanente a internet.
+
+El sistema ofrece funciones clasicas de reproductor musical:
+
+- Biblioteca de canciones locales.
+- Reproduccion, pausa, anterior y siguiente.
+- Busqueda por cancion, artista, album o carpeta.
+- Organizacion por artistas, albumes y carpetas.
+- Playlists personalizadas.
+- Favoritos.
+- Temas visuales.
+- Caratulas.
+- Reproduccion en segundo plano.
+- Controles multimedia del sistema.
+- Modo DJ/crossfade.
+
+No se detecto una landing page web implementada dentro del repositorio.
+No existen archivos tipicos de una web como package.json, index.html,
+vite.config, next.config, CSS, JavaScript o TypeScript.
+
+Para una landing page, el proyecto ya tiene una propuesta de valor clara:
+SoftMusic puede presentarse como un reproductor musical local, privado,
+rapido, personalizable y disponible tanto para Android como para desktop.
+
+============================================================
+2. OBJETIVO DEL SISTEMA
+============================================================
+
+El objetivo principal de SoftMusic es permitir que el usuario reproduzca
+su musica local de manera sencilla, visual y organizada.
+
+El sistema evita depender de servicios externos. La musica se obtiene
+equipo desktop.
+
+El producto se puede enfocar en los siguientes mensajes:
+
+- Tu musica local en un reproductor moderno.
+- Sin streaming obligatorio.
+- Sin cuentas de usuario.
+- Sin depender de internet para escuchar tus canciones.
+- Experiencia nativa en Android y desktop.
+- Organizacion por canciones, artistas, albumes, carpetas y playlists.
+- Personalizacion visual con temas.
+- Integracion con controles del sistema.
+
+============================================================
+3. VERSIONES DISPONIBLES
+============================================================
+
+3.1 Version Android movil
+
+La version movil esta desarrollada como aplicacion Android nativa.
+Utiliza Kotlin, Jetpack Compose, Material 3 y Media3/ExoPlayer.
+
+Esta version esta orientada a telefonos y dispositivos Android.
+Obtiene canciones desde MediaStore, que es el sistema de Android para
+acceder a archivos multimedia del dispositivo.
+
+Caracteristicas principales de la version movil:
+
+- Interfaz mobile-first.
+- Permisos de lectura de audio.
+- Biblioteca musical desde MediaStore.
+- Reproduccion con ExoPlayer.
+- Servicio de reproduccion en segundo plano.
+- MediaSession para controles multimedia del sistema.
+- Notificaciones de reproduccion.
+- Favoritos.
+- Playlists.
+- Temas claros, oscuros y variantes visuales.
+- Soporte de caratulas mediante Coil.
+
+3.2 Version desktop
+
+La version desktop esta desarrollada con Kotlin JVM y Compose Desktop.
+Esta orientada principalmente a Linux/PC.
+
+El usuario selecciona una carpeta local y la aplicacion escanea archivos
+
+Caracteristicas principales de la version desktop:
+
+- Interfaz desktop con Compose Desktop.
+- Seleccion de carpeta musical local.
+- Escaneo de subcarpetas y archivos de audio.
+- Lectura de metadatos con Jaudiotagger.
+- Reproduccion mediante VLC como backend principal.
+- Reproduccion mediante MPV como backend experimental.
+- Integracion MPRIS en Linux.
+- Controles multimedia del entorno de escritorio.
+- Preferencias guardadas localmente.
+- Cache de caratulas.
+- Favoritos.
+- Playlists.
+- Busqueda y filtros.
+- Temas visuales.
+
+============================================================
+4. TECNOLOGIAS PRINCIPALES
+============================================================
+
+Lenguaje principal:
+
+- Kotlin.
+
+Build system:
+
+- Gradle Kotlin DSL.
+
+Version de Java:
+
+- Java 17.
+
+Tecnologias Android:
+
+- Android Gradle Plugin 8.7.3.
+- Kotlin 2.0.21.
+- Jetpack Compose.
+- Material 3.
+- AndroidX Lifecycle.
+- ViewModel.
+- AndroidX Media3.
+- ExoPlayer.
+- MediaSession.
+- Coil para carga de imagenes y caratulas.
+- SharedPreferences para preferencias locales.
+- MediaStore para acceder a canciones locales.
+
+Tecnologias desktop:
+
+- Kotlin JVM.
+- Compose Desktop 1.7.3.
+- Jaudiotagger para metadatos de audio.
+- DBus Java para integracion MPRIS.
+- VLC como backend de reproduccion estable.
+- MPV como backend experimental.
+- Arch Linux packaging mediante PKGBUILD.
+
+Persistencia:
+
+- Android usa SharedPreferences para favoritos, playlists y preferencias.
+- Android usa MediaStore para consultar canciones del dispositivo.
+- Desktop usa archivo de propiedades local.
+- Desktop usa cache local para caratulas.
+
+No se detecto:
+
+- Backend web.
+- API remota.
+- Base de datos relacional.
+- Framework web frontend.
+- Landing page implementada.
+
+============================================================
+5. ESTRUCTURA GENERAL DEL PROYECTO
+============================================================
+
+El proyecto esta organizado como monorepo Gradle multi-modulo.
+
+Modulos principales:
+
+- app/
+  Aplicacion Android nativa.
+
+- desktop/
+  Aplicacion desktop con Compose Desktop.
+
+- shared/
+  Codigo compartido entre versiones.
+
+- img/
+  Assets graficos como iconos y favicon.
+
+- packaging/arch/
+  Archivos para empaquetado en Arch Linux.
+
+- gradle/
+  Configuracion auxiliar de Gradle.
+
+Archivos de configuracion principales:
+
+- settings.gradle.kts
+- build.gradle.kts
+- app/build.gradle.kts
+- desktop/build.gradle.kts
+- shared/build.gradle.kts
+- gradlew
+- gradlew.bat
+
+============================================================
+6. ARQUITECTURA DEL SISTEMA
+============================================================
+
+SoftMusic tiene una arquitectura separada por plataforma:
+
+- shared contiene modelos y reglas comunes.
+- app contiene la experiencia Android.
+- desktop contiene la experiencia desktop.
+
+La version Android se aproxima a una arquitectura MVVM ligera:
+
+- MainActivity inicia la aplicacion, permisos y preferencias.
+- MusicViewModel centraliza estado de UI, reproduccion, cola, favoritos
+  y playlists.
+- MusicRepository obtiene canciones desde MediaStore.
+- MusicService mantiene la reproduccion en segundo plano.
+- SoftMusicApp define pantallas y componentes principales de UI.
+
+La version desktop concentra gran parte de la UI y flujo en Main.kt:
+
+- Main.kt contiene estado, navegacion, UI y comportamiento principal.
+- DesktopMusicScanner escanea carpetas y extrae metadatos.
+- DesktopAudioPlayer controla reproduccion con VLC.
+- MpvPlaybackBackend controla reproduccion con MPV.
+- DesktopMprisService integra controles multimedia en Linux.
+- DesktopPreferencesStore guarda preferencias locales.
+
+El modulo shared contiene entidades y reglas reutilizables:
+
+- Song.
+- MusicPlaylist.
+- MusicFolder.
+- Reglas de cola y reproduccion.
+
+============================================================
+7. FUNCIONALIDADES PRINCIPALES
+============================================================
+
+7.1 Biblioteca musical local
+
+La aplicacion permite acceder a canciones almacenadas localmente.
+
+En Android, las canciones se consultan desde MediaStore.
+En desktop, las canciones se obtienen escaneando una carpeta local.
+
+Esta funcionalidad es el centro del producto y permite comunicar que
+SoftMusic no depende de streaming para funcionar.
+
+7.2 Reproduccion musical
+
+El usuario puede reproducir, pausar, avanzar, retroceder y controlar el
+progreso de la cancion.
+
+En Android se usa Media3/ExoPlayer.
+En desktop se usa VLC o MPV como backend externo.
+
+7.3 Reproduccion en segundo plano
+
+La version Android incluye un MusicService para mantener la reproduccion
+cuando la app no esta en primer plano.
+
+Tambien integra MediaSession para que el sistema operativo pueda mostrar
+controles de reproduccion.
+
+7.4 Controles del sistema
+
+Android puede mostrar controles en notificaciones o pantalla bloqueada.
+
+Desktop puede integrarse con MPRIS en Linux, permitiendo controles desde
+el entorno de escritorio.
+
+7.5 Busqueda
+
+El usuario puede encontrar canciones usando criterios como:
+
+- Titulo.
+- Artista.
+- Album.
+- Carpeta.
+
+7.6 Filtros y vistas de organizacion
+
+La musica puede visualizarse o agruparse por:
+
+- Canciones.
+- Artistas.
+- Albumes.
+- Carpetas.
+- Favoritos.
+- Playlists.
+
+7.7 Favoritos
+
+El usuario puede marcar canciones como favoritas para acceder rapidamente
+a ellas.
+
+7.8 Playlists
+
+El usuario puede crear listas de reproduccion y organizar canciones.
+
+Las playlists se guardan localmente.
+
+7.9 Temas visuales
+
+La aplicacion tiene opciones de apariencia, incluyendo temas claros,
+oscuros y variantes visuales.
+
+Esto ayuda a que la app tenga una experiencia personalizable y atractiva.
+
+7.10 Caratulas
+
+La aplicacion maneja imagenes de caratulas para mejorar la experiencia
+visual.
+
+Android usa Coil para cargar imagenes.
+Desktop extrae y cachea caratulas cuando estan disponibles.
+
+7.11 Modo DJ / crossfade
+
+SoftMusic incluye un modo DJ o crossfade para transiciones entre
+canciones.
+
+Esta funcion es atractiva para marketing, pero debe comunicarse con
+cuidado si aun no esta totalmente validada en todos los escenarios.
+
+============================================================
+8. FUNCIONAMIENTO EN ANDROID MOVIL
+============================================================
+
+Flujo general de uso:
+
+1. El usuario abre SoftMusic en Android.
+2. La app solicita permisos para acceder a archivos de audio.
+3. Si el permiso es concedido, la app consulta canciones desde MediaStore.
+4. Se muestra la biblioteca musical.
+5. El usuario puede buscar, filtrar, reproducir, marcar favoritos o crear
+   playlists.
+6. Al reproducir, MusicService mantiene el audio activo en segundo plano.
+7. El sistema Android puede mostrar controles multimedia.
+8. El usuario puede cambiar temas y preferencias.
+
+Permisos Android relevantes:
+
+- READ_MEDIA_AUDIO en Android 13 o superior.
+- READ_EXTERNAL_STORAGE en Android 12 o inferior.
+- POST_NOTIFICATIONS en versiones recientes cuando aplica.
+
+Componentes clave Android:
+
+- MainActivity.kt
+- SoftMusicApp.kt
+- MusicViewModel.kt
+- MusicService.kt
+- MusicRepository.kt
+- AndroidManifest.xml
+
+Ventajas de la version movil:
+
+- Experiencia nativa.
+- Integracion con el sistema Android.
+- Reproduccion en segundo plano.
+- Interfaz pensada para pantallas tactiles.
+- Acceso a biblioteca local del telefono.
+
+Puntos a validar en movil:
+
+- Telefonos pequenos.
+- Telefonos grandes.
+- Orientacion horizontal.
+- Tablets.
+- Permisos denegados.
+- Biblioteca vacia.
+- Biblioteca con muchas canciones.
+- Reproduccion en segundo plano prolongada.
+- Controles de notificacion y pantalla bloqueada.
+
+============================================================
+9. FUNCIONAMIENTO EN DESKTOP
+============================================================
+
+Flujo general de uso:
+
+1. El usuario abre SoftMusic Desktop.
+2. El usuario selecciona una carpeta local con musica.
+3. La aplicacion escanea archivos y subcarpetas.
+4. Se extraen metadatos de las canciones.
+5. Se muestran canciones, artistas, albumes, carpetas y listas.
+6. El usuario reproduce musica mediante VLC o MPV.
+7. La app puede integrarse con controles multimedia del escritorio Linux.
+8. Preferencias y cache se guardan localmente.
+
+Backends de reproduccion:
+
+- VLC: backend principal y mas estable.
+- MPV: backend experimental.
+
+Formatos esperados:
+
+- MP3.
+- FLAC.
+- WAV.
+- OGG.
+- M4A.
+
+Componentes clave desktop:
+
+- desktop/src/main/kotlin/com/softmusic/app/desktop/Main.kt
+- DesktopMusicScanner.kt
+- DesktopAudioPlayer.kt
+- MpvPlaybackBackend.kt
+- DesktopMprisService.kt
+- DesktopPreferencesStore.kt
+
+Ventajas de la version desktop:
+
+- Interfaz nativa de escritorio.
+- Escaneo de carpetas locales.
+- Organizacion por carpetas.
+- Integracion con Linux/MPRIS.
+- Soporte para bibliotecas grandes locales.
+
+Puntos a validar en desktop:
+
+- VLC instalado.
+- MPV instalado.
+- VLC/MPV no instalado.
+- Carpeta vacia.
+- Carpeta con muchos archivos.
+- Archivos con metadatos incompletos.
+- Ventanas pequenas.
+- Redimensionamiento.
+- GNOME/KDE u otros entornos Linux.
+- Rendimiento del escaneo inicial.
+
+============================================================
+10. MODELO DE DATOS
+============================================================
+
+Entidades principales:
+
+Song:
+
+- id
+- title
+- artist
+- album
+- durationMs
+- dateAddedSeconds
+- folderPath
+- folderName
+- uri
+- artworkUri
+
+MusicPlaylist:
+
+- id
+- name
+- songIds
+
+MusicFolder:
+
+- path
+- name
+- songCount
+
+PlayerUiState:
+
+- canciones visibles.
+- cola de reproduccion.
+- favoritos.
+- playlists.
+- carpeta seleccionada.
+- modo de reproduccion.
+- estado actual de reproduccion.
+
+Persistencia Android:
+
+- Canciones desde MediaStore.
+- Favoritos en SharedPreferences.
+- Playlists en SharedPreferences.
+- Preferencias en SharedPreferences.
+
+Persistencia desktop:
+
+- Preferencias en archivo desktop.properties.
+- Configuracion en ruta de usuario.
+- Cache de caratulas en carpeta local de cache.
+
+Riesgo del modelo:
+
+Las playlists dependen de identificadores de canciones. Si cambian rutas,
+IDs de MediaStore o archivos locales, algunas referencias pueden dejar de
+coincidir.
+
+============================================================
+11. INFORMACION PARA LANDING PAGE
+============================================================
+
+Actualmente no existe landing page web dentro del proyecto.
+
+Sin embargo, la aplicacion tiene suficiente contenido funcional para crear
+una landing clara y atractiva.
+
+Propuesta de valor sugerida:
+
+SoftMusic es un reproductor musical local para Android y desktop que te
+permite disfrutar tu biblioteca sin depender de streaming, cuentas ni
+conexion permanente a internet.
+
+Mensajes principales para landing:
+
+- Reproduce tu musica local.
+- Disponible para Android y desktop.
+- Sin cuentas obligatorias.
+- Sin depender de streaming.
+- Biblioteca organizada por canciones, artistas, albumes y carpetas.
+- Crea playlists y marca favoritos.
+- Disfruta temas visuales personalizables.
+- Controla la musica desde el sistema.
+- Modo DJ/crossfade para transiciones.
+
+Secciones recomendadas para landing:
+
+- Hero principal.
+- CTA de descarga.
+- Beneficios principales.
+- Capturas de Android.
+- Capturas de desktop.
+- Funciones destacadas.
+- Comparacion movil vs desktop.
+- Requisitos de instalacion.
+- Privacidad y funcionamiento offline.
+- Preguntas frecuentes.
+
+CTA posibles:
+
+- Descargar para Android.
+- Descargar para Linux.
+- Ver en GitHub.
+- Descargar APK.
+- Descargar paquete desktop.
+
+Claims recomendados, si se validan:
+
+- Funciona con musica local.
+- No requiere cuenta.
+- No requiere streaming.
+- Tus archivos permanecen en tu dispositivo.
+- Reproductor moderno y personalizable.
+
+Claims que deben usarse con cuidado:
+
+- Totalmente privado.
+- Compatible con todos los formatos.
+- Disponible para todos los sistemas operativos.
+- Modo DJ estable.
+- Sin internet para absolutamente todo.
+
+Estos mensajes requieren validacion tecnica, legal o de producto antes de
+usarse publicamente.
+
+============================================================
+12. IMPACTO DEL SISTEMA
+============================================================
+
+Impacto para usuarios:
+
+- Permite recuperar el control sobre bibliotecas musicales locales.
+- Reduce dependencia de plataformas de streaming.
+- Ofrece una experiencia simple para escuchar archivos propios.
+- Da valor a usuarios con colecciones MP3, FLAC u otros formatos.
+- Permite organizar musica sin conexion.
+
+Impacto tecnico:
+
+- Usa tecnologias modernas de UI en Kotlin.
+- Comparte modelos entre Android y desktop.
+- Integra reproduccion nativa o de bajo nivel segun plataforma.
+- No depende de backend ni infraestructura externa.
+
+Impacto comercial para landing:
+
+- El producto tiene diferenciadores claros frente a reproductores web o
+  apps de streaming.
+- La disponibilidad en movil y desktop permite presentar un ecosistema.
+- La privacidad y el funcionamiento local son mensajes fuertes.
+- El modo DJ y la personalizacion visual pueden servir como funciones
+  destacadas.
+
+Impacto en experiencia de usuario:
+
+- La app puede funcionar como reproductor diario.
+- El usuario puede acceder rapidamente a su musica.
+- Los favoritos y playlists mejoran la organizacion.
+- Los controles del sistema reducen friccion durante el uso.
+
+============================================================
+13. ANALISIS RESPONSIVE Y VERSIONES
+============================================================
+
+Android movil:
+
+La UI esta orientada a mobile-first. Usa Compose, listas verticales,
+bottom sheets y componentes adecuados para interaccion tactil.
+
+No se detecto una estrategia fuerte de breakpoints para tablet o layouts
+amplios. Para una landing se puede afirmar que existe version movil, pero
+conviene validar telefonos pequenos, grandes, landscape y tablet antes de
+prometer soporte adaptativo avanzado.
+
+Desktop:
+
+La version desktop tiene interfaz propia de escritorio. Usa paneles,
+sidebar y barras de control.
+
+Algunos valores parecen fijos, como anchos de sidebar o paneles. Esto
+puede limitar el comportamiento en ventanas pequenas. Conviene probar
+redimensionamiento antes de usar capturas en pantallas muy estrechas.
+
+Landing page:
+
+No existe landing responsive implementada. Si se crea una landing web,
+debe disenarse desde cero considerando:
+
+- Desktop.
+- Tablet.
+- Movil.
+- SEO.
+- Accesibilidad.
+- Rendimiento.
+- Capturas reales.
+
+============================================================
+14. ACCESIBILIDAD Y UX
+============================================================
+
+Aspectos positivos:
+
+- Android usa componentes Compose y Material 3.
+- Existen contentDescription y semantics en algunas partes.
+- La interfaz incluye elementos conocidos para reproductores musicales.
+- El uso de temas puede ayudar a la preferencia visual del usuario.
+
+Puntos a mejorar o validar:
+
+- Contraste de colores en todos los temas.
+- Navegacion con teclado en desktop.
+- Compatibilidad con lectores de pantalla.
+- Estados vacios claros.
+- Estados de error cuando no hay permisos o no hay backend de audio.
+- Textos de ayuda para usuarios nuevos.
+- Pruebas con tamanos de fuente grandes.
+
+============================================================
+15. RENDIMIENTO
+============================================================
+
+Factores positivos:
+
+- No depende de llamadas remotas para cargar musica local.
+- Android usa MediaStore, que es el mecanismo nativo de consulta.
+- Desktop escanea archivos locales.
+- No hay backend externo que pueda bloquear el uso principal.
+
+Riesgos de rendimiento:
+
+- Bibliotecas muy grandes pueden afectar escaneo inicial.
+- Extraccion de metadatos y caratulas puede ser costosa en desktop.
+- VLC/MPV como procesos externos pueden tener variaciones por sistema.
+- Listas muy grandes requieren cuidado en la UI.
+- Crossfade puede aumentar complejidad de reproduccion.
+
+Recomendaciones:
+
+- Medir escaneo con bibliotecas grandes.
+- Mostrar progreso o estados claros durante carga.
+- Cachear caratulas y metadatos cuando sea posible.
+- Probar consumo de memoria en desktop.
+- Probar reproduccion prolongada.
+
+============================================================
+16. SEO Y MARKETING
+============================================================
+
+El proyecto no tiene landing web, por lo que actualmente no existen:
+
+- Titulo SEO web.
+- Meta description.
+- Open Graph tags.
+- Twitter cards.
+- Schema.org.
+- Sitemap.
+- Robots.txt.
+- Optimizacion Lighthouse.
+
+Si se crea una landing, se recomienda incluir:
+
+- Title corto con palabra clave principal.
+- Description clara.
+- Imagen Open Graph.
+- Capturas reales de Android y desktop.
+- Seccion de descargas.
+- Requisitos tecnicos.
+- FAQ.
+- Enlaces a releases o repositorio.
+
+Ejemplo de title:
+
+SoftMusic - Reproductor de musica local para Android y Desktop
+
+Ejemplo de description:
+
+Escucha tu biblioteca musical local con SoftMusic. Reproductor offline
+para Android y desktop con playlists, favoritos, temas y controles del
+sistema.
+
+============================================================
+17. RIESGOS TECNICOS
+============================================================
+
+Riesgo alto:
+
+- No existe landing page web real dentro del proyecto.
+
+Impacto:
+
+No se puede publicar una pagina promocional sin crear primero una
+estructura web o elegir una tecnologia.
+
+Recomendacion:
+
+Definir si la landing sera parte de este repositorio o un proyecto web
+separado.
+
+Riesgo alto:
+
+- Desktop depende de VLC o MPV externos.
+
+Impacto:
+
+El usuario podria instalar la app pero no reproducir musica si no tiene
+el backend necesario.
+
+Recomendacion:
+
+Comunicar requisitos claramente en landing y documentacion.
+
+Riesgo medio:
+
+- Desktop puede no adaptarse bien a ventanas muy pequenas.
+
+Impacto:
+
+La experiencia podria romperse o ser incomoda en resoluciones bajas.
+
+Recomendacion:
+
+Probar y ajustar layouts adaptativos.
+
+Riesgo medio:
+
+- Android no muestra una estrategia avanzada para tablets.
+
+Impacto:
+
+Puede funcionar, pero no necesariamente aprovechar pantallas grandes.
+
+Recomendacion:
+
+Validar tablets antes de usar claims de compatibilidad avanzada.
+
+Riesgo medio:
+
+- Main.kt desktop concentra mucha logica.
+
+Impacto:
+
+Puede dificultar mantenimiento y evolucion.
+
+Recomendacion:
+
+Separar pantallas, componentes y estado en archivos mas pequenos si se
+planean cambios grandes.
+
+Riesgo medio:
+
+- Modo DJ/crossfade es complejo.
+
+Impacto:
+
+Puede tener errores en cambios de cancion, repeat, shuffle o canciones
+cortas.
+
+Recomendacion:
+
+Probarlo antes de destacarlo como funcion estable.
+
+Riesgo bajo:
+
+- Faltan assets comerciales.
+
+Impacto:
+
+La landing necesitara capturas, mockups y textos finales.
+
+Recomendacion:
+
+Crear screenshots reales en Android y desktop.
+
+============================================================
+18. PRUEBAS RECOMENDADAS
+============================================================
+
+Pruebas Android:
+
+- Primera instalacion.
+- Permiso concedido.
+- Permiso denegado.
+- Android 13 o superior.
+- Android 12 o inferior.
+- Biblioteca vacia.
+- Biblioteca con muchas canciones.
+- Reproduccion en segundo plano.
+- Controles en notificacion.
+- Busqueda por titulo, artista y album.
+- Favoritos.
+- Playlists.
+- Cambio de tema.
+- Modo DJ activado y desactivado.
+- Telefono pequeno.
+- Telefono grande.
+- Landscape.
+- Tablet.
+
+Pruebas desktop:
+
+- Abrir sin carpeta seleccionada.
+- Seleccionar carpeta valida.
+- Carpeta vacia.
+- Carpeta con muchos archivos.
+- Archivos MP3.
+- Archivos FLAC.
+- Archivos WAV.
+- Archivos OGG.
+- Archivos M4A.
+- Reproduccion con VLC.
+- Reproduccion con MPV.
+- Sistema sin VLC ni MPV.
+- Busqueda.
+- Filtros por artista, album y carpeta.
+- Playlists.
+- Favoritos.
+- MPRIS en GNOME.
+- MPRIS en KDE.
+- Ventana pequena.
+- Ventana grande.
+- Redimensionamiento.
+
+Pruebas landing si se crea:
+
+- Vista desktop.
+- Vista tablet.
+- Vista movil.
+- SEO basico.
+- Lighthouse.
+- Accesibilidad basica.
+- Peso de imagenes.
+- CTA visibles.
+- Enlaces de descarga correctos.
+- Capturas reales.
+
+============================================================
+19. COMANDOS SUGERIDOS PARA VERIFICACION
+============================================================
+
+Estos comandos fueron identificados como utiles. No necesariamente deben
+ejecutarse en todos los casos, ya que pueden generar archivos de build.
+
+Pruebas del modulo compartido:
+
+./gradlew :shared:test
+
+Compilacion desktop:
+
+./gradlew :desktop:classes
+
+Ejecucion desktop:
+
+./gradlew :desktop:run
+
+Compilacion Android debug:
+
+./gradlew :app:assembleDebug
+
+Ejecucion desktop con MPV:
+
+SOFTMUSIC_DESKTOP_BACKEND=mpv ./gradlew :desktop:run
+
+Empaquetado portable Linux:
+
+./gradlew :desktop:packagePortableLinux
+
+============================================================
+20. ARCHIVOS CLAVE
+============================================================
+
+Documentacion y configuracion:
+
+- README.md
+- settings.gradle.kts
+- build.gradle.kts
+- app/build.gradle.kts
+- desktop/build.gradle.kts
+- shared/build.gradle.kts
+
+Android:
+
+- app/src/main/AndroidManifest.xml
+- app/src/main/java/com/softmusic/app/MainActivity.kt
+- app/src/main/java/com/softmusic/app/ui/SoftMusicApp.kt
+- app/src/main/java/com/softmusic/app/player/MusicViewModel.kt
+- app/src/main/java/com/softmusic/app/player/MusicService.kt
+
+Desktop:
+
+- desktop/src/main/kotlin/com/softmusic/app/desktop/Main.kt
+- desktop/src/main/kotlin/com/softmusic/app/desktop/data/DesktopMusicScanner.kt
+- desktop/src/main/kotlin/com/softmusic/app/desktop/player/DesktopAudioPlayer.kt
+- desktop/src/main/kotlin/com/softmusic/app/desktop/player/MpvPlaybackBackend.kt
+- desktop/src/main/kotlin/com/softmusic/app/desktop/integration/DesktopMprisService.kt
+
+Shared:
+
+- shared/src/main/kotlin/com/softmusic/app/model/Song.kt
+- shared/src/main/kotlin/com/softmusic/app/model/MusicPlaylist.kt
+- shared/src/main/kotlin/com/softmusic/app/model/MusicFolder.kt
+- shared/src/test/kotlin/com/softmusic/app/player/PlaybackQueueRulesTest.kt
+
+Packaging y assets:
+
+- img/favicon.svg
+- packaging/arch/PKGBUILD
+- packaging/arch/softmusic.desktop
+- packaging/arch/softmusic.svg
+
+============================================================
+21. RECOMENDACIONES PARA SIGUIENTES PASOS
+============================================================
+
+1. Definir objetivo de la landing.
+
+La landing puede promocionar Android, desktop o ambas versiones por igual.
+Es importante decidir el CTA principal.
+
+2. Definir tecnologia web.
+
+Opciones posibles:
+
+- HTML/CSS/JS estatico.
+- Vite.
+- Astro.
+- Next.js.
+- Otra herramienta segun hosting.
+
+3. Crear contenido visual.
+
+Se recomiendan capturas reales de:
+
+- Pantalla principal Android.
+- Reproductor Android.
+- Playlists Android.
+- Pantalla principal desktop.
+- Biblioteca desktop.
+- Temas visuales.
+
+4. Validar claims.
+
+Antes de publicar, validar frases como:
+
+- Sin internet.
+- Sin cuentas.
+- Privado.
+- Compatible con Linux.
+- Soporte de formatos.
+- Modo DJ estable.
+
+5. Probar versiones reales.
+
+Ejecutar pruebas en:
+
+- Telefono Android real.
+- Emulador Android.
+- Desktop Linux con VLC.
+- Desktop Linux con MPV.
+- Pantallas pequenas y grandes.
+
+6. Mejorar mantenibilidad desktop.
+
+Si se planea evolucionar mucho la version desktop, conviene dividir
+Main.kt en componentes mas pequenos.
+
+7. Agregar pruebas automatizadas.
+
+Especialmente para:
+
+- Reglas de cola.
+- Shuffle.
+- Repeat.
+- Playlists.
+- Preferencias.
+- Scanner desktop.
+- Estados del ViewModel.
+
+============================================================
+22. CONCLUSION
+============================================================
+
+SoftMusic es una aplicacion musical local con dos clientes principales:
+Android y desktop. El producto tiene una base tecnica clara, una propuesta
+de valor entendible y funciones suficientes para construir una landing
+atractiva.
+
+La principal brecha actual es que no existe una landing page web dentro
+contenido visual y CTA principal.
+
+Como producto, SoftMusic puede posicionarse como un reproductor moderno
+para quienes quieren escuchar su biblioteca musical local sin depender de
+streaming, cuentas externas ni conexion permanente.
+
+============================================================
+FIN DEL INFORME
+============================================================
