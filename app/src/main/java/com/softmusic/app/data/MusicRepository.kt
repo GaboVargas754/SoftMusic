@@ -29,6 +29,7 @@ class MusicRepository {
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.SIZE,
             MediaStore.Audio.Media.DATE_ADDED,
             MediaStore.Audio.Media.ALBUM_ID,
             folderColumnName,
@@ -47,6 +48,7 @@ class MusicRepository {
             val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
             val dateAddedColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
             val albumIdColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
             val folderColumn = cursor.getColumnIndex(folderColumnName)
@@ -66,6 +68,7 @@ class MusicRepository {
                     artist = cursor.getString(artistColumn)?.takeIf { it.isNotBlank() } ?: "Artista desconocido",
                     album = cursor.getString(albumColumn)?.takeIf { it.isNotBlank() } ?: "Álbum desconocido",
                     durationMs = cursor.getLong(durationColumn),
+                    fileSizeBytes = cursor.getLongOrNull(sizeColumn) ?: 0L,
                     dateAddedSeconds = cursor.getLong(dateAddedColumn),
                     folderPath = folder.path,
                     folderName = folder.name,

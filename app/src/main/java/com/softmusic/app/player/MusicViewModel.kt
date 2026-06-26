@@ -18,6 +18,7 @@ import com.softmusic.app.data.MusicFolder
 import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.MusicRepository
 import com.softmusic.app.data.Song
+import com.softmusic.app.data.isIncludedBySmallAudioFilter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -98,17 +99,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         defaultPlaybackMode: PlaybackMode,
         defaultSortMode: SortMode,
         hiddenFolderPaths: Set<String>,
+        excludeSmallAudios: Boolean,
         djModeEnabled: Boolean,
         djMixDurationSeconds: Int,
     ) {
         _uiState.update { current ->
             val allFolders = current.songs.toFolders()
+            val visibleFolders = current.songs.visibleSongs(emptySet(), excludeSmallAudios).toFolders()
             val selectedFolderPath = defaultFolderPath?.takeIf { folderPath ->
-                folderPath !in hiddenFolderPaths && (current.songs.isEmpty() || current.songs.any { it.folderPath == folderPath })
+                folderPath !in hiddenFolderPaths && (
+                    current.songs.isEmpty() ||
+                        current.songs.any { it.folderPath == folderPath && it.isIncludedBySmallAudioFilter(excludeSmallAudios) }
+                    )
             }
             current.copy(
                 selectedFolderPath = selectedFolderPath,
                 hiddenFolderPaths = hiddenFolderPaths,
+                excludeSmallAudios = excludeSmallAudios,
                 playbackMode = defaultPlaybackMode,
                 sortMode = defaultSortMode,
                 djModeEnabled = djModeEnabled,
@@ -116,8 +123,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 shuffleEnabled = defaultPlaybackMode == PlaybackMode.Shuffle,
                 repeatSetting = defaultPlaybackMode.toRepeatSetting(),
                 allFolders = allFolders,
-                folders = allFolders.visibleFolders(hiddenFolderPaths),
-                visibleSongs = current.songs.filteredAndSorted(selectedFolderPath, defaultSortMode, hiddenFolderPaths),
+                folders = visibleFolders.visibleFolders(hiddenFolderPaths),
+                visibleSongs = current.songs.filteredAndSorted(selectedFolderPath, defaultSortMode, hiddenFolderPaths, excludeSmallAudios),
             )
         }
         MusicService.updateDjConfig(
@@ -138,17 +145,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }.onSuccess { songs ->
                 _uiState.update { current ->
                     val allFolders = songs.toFolders()
+                    val visibleFolders = songs.visibleSongs(emptySet(), current.excludeSmallAudios).toFolders()
                     val availableFolderPaths = allFolders.map { it.path }.toSet()
                     val hiddenFolderPaths = current.hiddenFolderPaths.filterTo(mutableSetOf()) { it in availableFolderPaths }
                     val selectedFolderPath = current.selectedFolderPath?.takeIf { folderPath ->
-                        folderPath !in hiddenFolderPaths && songs.any { it.folderPath == folderPath }
+                        folderPath !in hiddenFolderPaths && songs.any {
+                            it.folderPath == folderPath && it.isIncludedBySmallAudioFilter(current.excludeSmallAudios)
+                        }
                     }
-                    val sorted = songs.filteredAndSorted(selectedFolderPath, current.sortMode, hiddenFolderPaths)
+                    val sorted = songs.filteredAndSorted(
+                        selectedFolderPath = selectedFolderPath,
+                        sortMode = current.sortMode,
+                        hiddenFolderPaths = hiddenFolderPaths,
+                        excludeSmallAudios = current.excludeSmallAudios,
+                    )
                     current.copy(
                         songs = songs,
                         visibleSongs = sorted,
                         allFolders = allFolders,
-                        folders = allFolders.visibleFolders(hiddenFolderPaths),
+                        folders = visibleFolders.visibleFolders(hiddenFolderPaths),
                         selectedFolderPath = selectedFolderPath,
                         isLoading = false,
                         errorMessage = null,
@@ -292,13 +307,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(errorMessage = "El reproductor todavía se está preparando") }
             return
         }
-        val sourceSongs = queue.distinctSongsById()
+        val state = _uiState.value
+        val sourceSongs = queue.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios).distinctSongsById()
         if (sourceSongs.isEmpty()) return
+        val safeRequestedSong = requestedSong?.takeIf { requested -> sourceSongs.any { it.id == requested.id } }
+        if (requestedSong != null && safeRequestedSong == null) return
 
-        val playbackMode = _uiState.value.playbackMode
-        if (forceRegenerate || shouldGenerateQueue(sourceSongs, requestedSong, source, sourceKey, playbackMode)) {
+        val playbackMode = state.playbackMode
+        if (forceRegenerate || shouldGenerateQueue(sourceSongs, safeRequestedSong, source, sourceKey, playbackMode)) {
             setActiveQueue(
-                queue = sourceSongs.generatePlaybackQueue(playbackMode, requestedSong),
+                queue = sourceSongs.generatePlaybackQueue(playbackMode, safeRequestedSong),
                 source = source,
                 sourceKey = sourceKey,
                 sourceSongs = sourceSongs,
@@ -306,7 +324,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        val requestedIndex = requestedSong?.let { requested ->
+        val requestedIndex = safeRequestedSong?.let { requested ->
             activeQueue.indexOfFirst { it.id == requested.id }
         } ?: -1
         val startIndex = if (requestedIndex >= 0) {
@@ -417,9 +435,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         if (previousMode != playbackMode && activeSourceSongs.isNotEmpty()) {
-            val availableSongs = _uiState.value.songs.visibleSongs(_uiState.value.hiddenFolderPaths)
+            val state = _uiState.value
+            val availableSongs = state.songs.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios)
             val sourceSongs = activeSourceSongs.refreshedFrom(availableSongs).ifEmpty {
-                activeSourceSongs.visibleSongs(_uiState.value.hiddenFolderPaths)
+                activeSourceSongs.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios)
             }
             if (sourceSongs.isEmpty()) return
             val generatedQueue = sourceSongs.generatePlaybackQueue(playbackMode, currentSong)
@@ -446,6 +465,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             selectedFolderPath = previousState.selectedFolderPath,
             sortMode = sortMode,
             hiddenFolderPaths = previousState.hiddenFolderPaths,
+            excludeSmallAudios = previousState.excludeSmallAudios,
         )
         _uiState.update { it.copy(sortMode = sortMode, visibleSongs = sorted) }
         syncQueueOrder()
@@ -454,12 +474,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setSelectedFolder(folderPath: String?) {
         val previousState = _uiState.value
         val selectedFolderPath = folderPath?.takeIf { selected ->
-            selected !in previousState.hiddenFolderPaths && previousState.songs.any { it.folderPath == selected }
+            selected !in previousState.hiddenFolderPaths && previousState.songs.any {
+                it.folderPath == selected && it.isIncludedBySmallAudioFilter(previousState.excludeSmallAudios)
+            }
         }
         val sorted = previousState.songs.filteredAndSorted(
             selectedFolderPath = selectedFolderPath,
             sortMode = previousState.sortMode,
             hiddenFolderPaths = previousState.hiddenFolderPaths,
+            excludeSmallAudios = previousState.excludeSmallAudios,
         )
         _uiState.update {
             it.copy(
@@ -473,20 +496,48 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setHiddenFolderPaths(hiddenFolderPaths: Set<String>) {
         _uiState.update { current ->
             val allFolders = current.songs.toFolders()
+            val visibleFolders = current.songs.visibleSongs(emptySet(), current.excludeSmallAudios).toFolders()
             val availableFolderPaths = allFolders.map { it.path }.toSet()
             val cleanHiddenFolderPaths = hiddenFolderPaths.filterTo(mutableSetOf()) { it in availableFolderPaths }
             val selectedFolderPath = current.selectedFolderPath?.takeIf { folderPath ->
-                folderPath !in cleanHiddenFolderPaths && current.songs.any { it.folderPath == folderPath }
+                folderPath !in cleanHiddenFolderPaths && current.songs.any {
+                    it.folderPath == folderPath && it.isIncludedBySmallAudioFilter(current.excludeSmallAudios)
+                }
             }
             current.copy(
                 hiddenFolderPaths = cleanHiddenFolderPaths,
                 allFolders = allFolders,
-                folders = allFolders.visibleFolders(cleanHiddenFolderPaths),
+                folders = visibleFolders.visibleFolders(cleanHiddenFolderPaths),
                 selectedFolderPath = selectedFolderPath,
                 visibleSongs = current.songs.filteredAndSorted(
                     selectedFolderPath = selectedFolderPath,
                     sortMode = current.sortMode,
                     hiddenFolderPaths = cleanHiddenFolderPaths,
+                    excludeSmallAudios = current.excludeSmallAudios,
+                ),
+            )
+        }
+        syncQueueOrder()
+    }
+
+    fun setExcludeSmallAudios(excludeSmallAudios: Boolean) {
+        _uiState.update { current ->
+            val visibleFolders = current.songs.visibleSongs(emptySet(), excludeSmallAudios).toFolders()
+            val selectedFolderPath = current.selectedFolderPath?.takeIf { folderPath ->
+                folderPath !in current.hiddenFolderPaths && (
+                    current.songs.isEmpty() ||
+                        current.songs.any { it.folderPath == folderPath && it.isIncludedBySmallAudioFilter(excludeSmallAudios) }
+                    )
+            }
+            current.copy(
+                excludeSmallAudios = excludeSmallAudios,
+                folders = visibleFolders.visibleFolders(current.hiddenFolderPaths),
+                selectedFolderPath = selectedFolderPath,
+                visibleSongs = current.songs.filteredAndSorted(
+                    selectedFolderPath = selectedFolderPath,
+                    sortMode = current.sortMode,
+                    hiddenFolderPaths = current.hiddenFolderPaths,
+                    excludeSmallAudios = excludeSmallAudios,
                 ),
             )
         }
@@ -656,7 +707,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun syncQueueOrder() {
         val player = controller ?: return
         if (player.mediaItemCount == 0) return
-        val availableSongs = _uiState.value.songs.visibleSongs(_uiState.value.hiddenFolderPaths)
+        val state = _uiState.value
+        val availableSongs = state.songs.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios)
         val nextSourceSongs = activeSourceSongs.refreshedFrom(availableSongs)
         val nextQueue = activeQueue.refreshedFrom(availableSongs)
         if (nextQueue.isEmpty()) return
@@ -680,8 +732,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun insertIntoGeneratedQueue(song: Song, afterCurrent: Boolean) {
+        val state = _uiState.value
+        if (song.folderPath in state.hiddenFolderPaths || !song.isIncludedBySmallAudioFilter(state.excludeSmallAudios)) return
         val player = controller
-        val currentSong = _uiState.value.currentSong
+        val currentSong = state.currentSong
         if (player == null || currentSong == null || activeQueue.isEmpty()) {
             startQueuePlayback(
                 queue = listOf(song),
@@ -899,17 +953,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         selectedFolderPath: String?,
         sortMode: SortMode,
         hiddenFolderPaths: Set<String>,
+        excludeSmallAudios: Boolean,
     ): List<Song> = asSequence()
         .filter { it.folderPath !in hiddenFolderPaths }
+        .filter { it.isIncludedBySmallAudioFilter(excludeSmallAudios) }
         .filter { selectedFolderPath == null || it.folderPath == selectedFolderPath }
         .sortedWith(sortMode.comparator())
         .toList()
 
-    private fun List<Song>.visibleSongs(hiddenFolderPaths: Set<String>): List<Song> = filterNot { it.folderPath in hiddenFolderPaths }
+    private fun List<Song>.visibleSongs(hiddenFolderPaths: Set<String>, excludeSmallAudios: Boolean): List<Song> = filter {
+        it.folderPath !in hiddenFolderPaths && it.isIncludedBySmallAudioFilter(excludeSmallAudios)
+    }
 
     private fun List<MusicFolder>.visibleFolders(hiddenFolderPaths: Set<String>): List<MusicFolder> = filterNot { it.path in hiddenFolderPaths }
 
-    private fun PlayerUiState.playableSongs(): List<Song> = visibleSongs.ifEmpty { songs.visibleSongs(hiddenFolderPaths) }
+    private fun PlayerUiState.playableSongs(): List<Song> = visibleSongs.ifEmpty { songs.visibleSongs(hiddenFolderPaths, excludeSmallAudios) }
 
     private fun List<Song>.toFolders(): List<MusicFolder> = groupBy { it.folderPath }
         .map { (path, songs) ->

@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.softmusic.app.player.MusicService
@@ -51,8 +55,10 @@ class MainActivity : ComponentActivity() {
             var defaultSortMode by remember { mutableStateOf(preferences.readDefaultSortMode()) }
             var fontScale by remember { mutableStateOf(preferences.readFontScale()) }
             var hiddenFolderPaths by remember { mutableStateOf(preferences.readHiddenFolderPaths()) }
+            var excludeSmallAudios by remember { mutableStateOf(preferences.getBoolean(KEY_EXCLUDE_SMALL_AUDIOS, true)) }
             var djModeEnabled by remember { mutableStateOf(preferences.getBoolean(KEY_DJ_MODE_ENABLED, false)) }
             var djMixDurationSeconds by remember { mutableStateOf(preferences.readDjMixDurationSeconds()) }
+            var audioPermissionRequested by remember { mutableStateOf(preferences.getBoolean(KEY_AUDIO_PERMISSION_REQUESTED, false)) }
 
             SoftMusicTheme(
                 themeMode = themeMode,
@@ -70,10 +76,16 @@ class MainActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.background,
                     ) {
                     SoftMusicRoot(
-                        hasAudioPermission = hasAudioPermission(),
-                        requestAudioPermission = ::audioPermissionName,
-                        hasNotificationPermission = hasNotificationPermission(),
-                        requestNotificationPermission = ::notificationPermissionName,
+                        checkAudioPermission = ::hasAudioPermission,
+                        audioPermissionName = ::audioPermissionName,
+                        shouldShowAudioPermissionRationale = ::shouldShowAudioPermissionRationale,
+                        audioPermissionRequested = audioPermissionRequested,
+                        onAudioPermissionRequested = {
+                            audioPermissionRequested = true
+                            preferences.edit().putBoolean(KEY_AUDIO_PERMISSION_REQUESTED, true).apply()
+                        },
+                        checkNotificationPermission = ::hasNotificationPermission,
+                        notificationPermissionName = ::notificationPermissionName,
                         themeMode = themeMode,
                             colorPalette = colorPalette,
                             highPerformanceMode = highPerformanceMode,
@@ -82,6 +94,7 @@ class MainActivity : ComponentActivity() {
                             defaultSortMode = defaultSortMode,
                             fontScale = fontScale,
                             hiddenFolderPaths = hiddenFolderPaths,
+                            excludeSmallAudios = excludeSmallAudios,
                             djModeEnabled = djModeEnabled,
                             djMixDurationSeconds = djMixDurationSeconds,
                             onThemeModeChange = { mode ->
@@ -128,6 +141,10 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }.apply()
                             },
+                            onExcludeSmallAudiosChange = { enabled ->
+                                excludeSmallAudios = enabled
+                                preferences.edit().putBoolean(KEY_EXCLUDE_SMALL_AUDIOS, enabled).apply()
+                            },
                             onDjModeChange = { enabled ->
                                 djModeEnabled = enabled
                                 preferences.edit().putBoolean(KEY_DJ_MODE_ENABLED, enabled).apply()
@@ -144,13 +161,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    override fun onDestroy() {
-        if (isFinishing && !isChangingConfigurations) {
-            stopMusicService()
-        }
-        super.onDestroy()
     }
 
     private fun closeApplication() {
@@ -172,6 +182,8 @@ class MainActivity : ComponentActivity() {
     } else {
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
+
+    private fun shouldShowAudioPermissionRationale(): Boolean = shouldShowRequestPermissionRationale(audioPermissionName())
 
     private fun hasNotificationPermission(): Boolean {
         val permission = notificationPermissionName() ?: return true
@@ -200,10 +212,13 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun SoftMusicRoot(
-    hasAudioPermission: Boolean,
-    requestAudioPermission: () -> String,
-    hasNotificationPermission: Boolean,
-    requestNotificationPermission: () -> String?,
+    checkAudioPermission: () -> Boolean,
+    audioPermissionName: () -> String,
+    shouldShowAudioPermissionRationale: () -> Boolean,
+    audioPermissionRequested: Boolean,
+    onAudioPermissionRequested: () -> Unit,
+    checkNotificationPermission: () -> Boolean,
+    notificationPermissionName: () -> String?,
     themeMode: AppThemeMode,
     colorPalette: AppColorPalette,
     highPerformanceMode: Boolean,
@@ -212,6 +227,7 @@ private fun SoftMusicRoot(
     defaultSortMode: SortMode,
     fontScale: Float,
     hiddenFolderPaths: Set<String>,
+    excludeSmallAudios: Boolean,
     djModeEnabled: Boolean,
     djMixDurationSeconds: Int,
     onThemeModeChange: (AppThemeMode) -> Unit,
@@ -222,6 +238,7 @@ private fun SoftMusicRoot(
     onDefaultSortModeChange: (SortMode) -> Unit,
     onFontScaleChange: (Float) -> Unit,
     onHiddenFolderPathsChange: (Set<String>) -> Unit,
+    onExcludeSmallAudiosChange: (Boolean) -> Unit,
     onDjModeChange: (Boolean) -> Unit,
     onDjMixDurationChange: (Int) -> Unit,
     onOpenNotificationSettings: () -> Unit,
@@ -230,18 +247,37 @@ private fun SoftMusicRoot(
 ) {
     val viewModel: MusicViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var permissionGranted by remember { mutableStateOf(hasAudioPermission) }
-    var notificationPermissionGranted by remember { mutableStateOf(hasNotificationPermission) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var permissionGranted by remember { mutableStateOf(checkAudioPermission()) }
+    var showAudioPermissionRationale by remember { mutableStateOf(shouldShowAudioPermissionRationale()) }
+    var notificationPermissionGranted by remember { mutableStateOf(checkNotificationPermission()) }
     var defaultsApplied by remember { mutableStateOf(false) }
+
+    fun refreshPermissionState() {
+        permissionGranted = checkAudioPermission()
+        showAudioPermissionRationale = shouldShowAudioPermissionRationale()
+        notificationPermissionGranted = checkNotificationPermission()
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        permissionGranted = granted
+    ) {
+        refreshPermissionState()
     }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        notificationPermissionGranted = granted
+    ) {
+        refreshPermissionState()
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshPermissionState()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(Unit) {
@@ -250,6 +286,7 @@ private fun SoftMusicRoot(
             defaultPlaybackMode = defaultPlaybackMode,
             defaultSortMode = defaultSortMode,
             hiddenFolderPaths = hiddenFolderPaths,
+            excludeSmallAudios = excludeSmallAudios,
             djModeEnabled = djModeEnabled,
             djMixDurationSeconds = djMixDurationSeconds,
         )
@@ -268,22 +305,20 @@ private fun SoftMusicRoot(
         }
     }
 
-    LaunchedEffect(permissionGranted, notificationPermissionGranted) {
-        val notificationPermission = requestNotificationPermission()
-        if (permissionGranted && !notificationPermissionGranted && notificationPermission != null) {
-            notificationPermissionLauncher.launch(notificationPermission)
-        }
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
         SoftMusicApp(
             uiState = uiState,
             playbackProgressState = viewModel.progressState,
             hasAudioPermission = permissionGranted,
+            showAudioPermissionRationale = showAudioPermissionRationale,
+            audioPermissionPermanentlyDenied = !permissionGranted && audioPermissionRequested && !showAudioPermissionRationale,
             hasNotificationPermission = notificationPermissionGranted,
-            onRequestPermission = { permissionLauncher.launch(requestAudioPermission()) },
+            onRequestPermission = {
+                onAudioPermissionRequested()
+                permissionLauncher.launch(audioPermissionName())
+            },
             onRequestNotificationPermission = {
-                val notificationPermission = requestNotificationPermission()
+                val notificationPermission = notificationPermissionName()
                 if (notificationPermission == null) {
                     notificationPermissionGranted = true
                 } else {
@@ -325,6 +360,10 @@ private fun SoftMusicRoot(
             onDefaultPlaybackModeChange = onDefaultPlaybackModeChange,
             onDefaultSortModeChange = onDefaultSortModeChange,
             onFontScaleChange = onFontScaleChange,
+            onExcludeSmallAudiosChange = { enabled ->
+                onExcludeSmallAudiosChange(enabled)
+                viewModel.setExcludeSmallAudios(enabled)
+            },
             onHiddenFolderChange = { folderPath, hidden ->
                 val updated = if (hidden) {
                     hiddenFolderPaths + folderPath
@@ -362,8 +401,10 @@ private const val KEY_DEFAULT_PLAYBACK_MODE = "default_playback_mode"
 private const val KEY_DEFAULT_SORT_MODE = "default_sort_mode"
 private const val KEY_FONT_SCALE = "font_scale"
 private const val KEY_HIDDEN_FOLDER_PATHS = "hidden_folder_paths"
+private const val KEY_EXCLUDE_SMALL_AUDIOS = "exclude_small_audios"
 private const val KEY_DJ_MODE_ENABLED = "dj_mode_enabled"
 private const val KEY_DJ_MIX_DURATION_SECONDS = "dj_mix_duration_seconds"
+private const val KEY_AUDIO_PERMISSION_REQUESTED = "audio_permission_requested"
 private const val MIN_FONT_SCALE = 0.80f
 private const val MAX_FONT_SCALE = 1.20f
 private const val MIN_DJ_MIX_SECONDS = 5

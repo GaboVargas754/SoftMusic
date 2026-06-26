@@ -147,6 +147,7 @@ class PlaybackQueueRulesTest {
             artist = "Artist",
             album = "Album",
             durationMs = 180_000L,
+            fileSizeBytes = 4_000_000L,
             dateAddedSeconds = id,
             folderPath = "/music",
             folderName = "music",

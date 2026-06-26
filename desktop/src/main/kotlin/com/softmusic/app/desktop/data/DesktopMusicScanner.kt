@@ -53,6 +53,7 @@ class DesktopMusicScanner {
             artist = audioMetadata.artist ?: fileNameMetadata.artist ?: "Artista desconocido",
             album = audioMetadata.album ?: "Álbum desconocido",
             durationMs = audioMetadata.durationMs,
+            fileSizeBytes = attrs.size().coerceAtLeast(0L),
             dateAddedSeconds = attrs.lastModifiedTime().toMillis().coerceAtLeast(0L) / 1_000L,
             folderPath = folderPath,
             folderName = folderName,

@@ -14,6 +14,7 @@ data class PlayerUiState(
     val folders: List<MusicFolder> = emptyList(),
     val selectedFolderPath: String? = null,
     val hiddenFolderPaths: Set<String> = emptySet(),
+    val excludeSmallAudios: Boolean = true,
     val currentSong: Song? = null,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
