@@ -35,10 +35,12 @@ class MusicService : MediaSessionService() {
     private lateinit var secondaryPlayer: ExoPlayer
     private lateinit var activePlayer: ExoPlayer
     private lateinit var standbyPlayer: ExoPlayer
+    private lateinit var silenceAnalyzer: DjSilenceAnalyzer
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var djMonitorJob: Job? = null
     private var djTransitionJob: Job? = null
     private var djEnabled = latestDjConfig.enabled
+    private var djMixMode = latestDjConfig.mixMode
     private var djMixDurationSeconds = latestDjConfig.mixDurationSeconds
     private var playbackMode = latestDjConfig.playbackMode
     private var preloadedForMediaId: String? = null
@@ -57,6 +59,7 @@ class MusicService : MediaSessionService() {
         secondaryPlayer = createPlayer(handlesAudioFocus = false)
         activePlayer = primaryPlayer
         standbyPlayer = secondaryPlayer
+        silenceAnalyzer = DjSilenceAnalyzer(applicationContext)
         applyPlaybackModeToPlayers()
         val sessionActivity = PendingIntent.getActivity(
             this,
@@ -112,6 +115,7 @@ class MusicService : MediaSessionService() {
 
     private fun applyDjConfig(config: DjServiceConfig) {
         djEnabled = config.enabled
+        djMixMode = config.mixMode
         djMixDurationSeconds = config.mixDurationSeconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
         playbackMode = config.playbackMode
         applyPlaybackModeToPlayers()
@@ -163,6 +167,18 @@ class MusicService : MediaSessionService() {
         if (remainingMs <= MIN_DJ_FADE_MS + DJ_HANDOFF_SAFETY_MS) return
 
         val target = nextDjTarget(player) ?: return
+        if (djMixMode == DjMixMode.Expert) {
+            maybeStartExpertDjTransition(
+                player = player,
+                currentMediaId = currentMediaId,
+                target = target,
+                durationMs = duration,
+                positionMs = position,
+                requestedMixDurationMs = mixDurationMs,
+            )
+            return
+        }
+
         if (remainingMs <= mixDurationMs + DJ_PRELOAD_LEAD_MS) {
             prepareStandbyPlayer(currentMediaId, target)
         }
@@ -183,6 +199,105 @@ class MusicService : MediaSessionService() {
                 djTransitionJob = null
             }
         }
+    }
+
+    private fun maybeStartExpertDjTransition(
+        player: ExoPlayer,
+        currentMediaId: String,
+        target: ServiceDjTarget,
+        durationMs: Long,
+        positionMs: Long,
+        requestedMixDurationMs: Long,
+    ) {
+        if (durationMs - positionMs > DJ_EXPERT_ANALYSIS_LEAD_MS) return
+
+        djTransitionJob = serviceScope.launch {
+            try {
+                val plan = buildExpertDjPlan(
+                    player = player,
+                    currentMediaId = currentMediaId,
+                    target = target,
+                    durationMs = durationMs,
+                    requestedMixDurationMs = requestedMixDurationMs,
+                ) ?: classicDjPlan(target, durationMs, requestedMixDurationMs)
+
+                while (isActive) {
+                    if (!isSameExpertTransitionContext(player, currentMediaId)) return@launch
+                    val currentPosition = player.currentPosition.coerceAtLeast(0)
+                    val remainingToTrigger = plan.triggerPositionMs - currentPosition
+                    if (remainingToTrigger <= DJ_EXPERT_TRIGGER_TOLERANCE_MS) break
+                    if (remainingToTrigger <= DJ_PRELOAD_LEAD_MS) {
+                        prepareStandbyPlayer(currentMediaId, plan.target)
+                    }
+                    delay(remainingToTrigger.coerceIn(DJ_MONITOR_INTERVAL_MS, DJ_EXPERT_WAIT_MAX_MS))
+                }
+
+                if (!isSameExpertTransitionContext(player, currentMediaId)) return@launch
+                val remainingMs = durationMs - player.currentPosition.coerceAtLeast(0)
+                if (remainingMs <= MIN_DJ_FADE_MS + DJ_HANDOFF_SAFETY_MS) return@launch
+                runDjTransition(
+                    outgoingPlayer = player,
+                    incomingPlayer = standbyPlayer,
+                    currentMediaId = currentMediaId,
+                    target = plan.target,
+                    mixDurationMs = plan.mixDurationMs.coerceAtMost(remainingMs - DJ_HANDOFF_SAFETY_MS),
+                )
+            } catch (throwable: Throwable) {
+                if (throwable is CancellationException) throw throwable
+            } finally {
+                djTransitionJob = null
+            }
+        }
+    }
+
+    private suspend fun buildExpertDjPlan(
+        player: ExoPlayer,
+        currentMediaId: String,
+        target: ServiceDjTarget,
+        durationMs: Long,
+        requestedMixDurationMs: Long,
+    ): ExpertDjPlan? {
+        val currentItem = player.currentMediaItem?.takeIf { it.mediaId == currentMediaId } ?: return null
+        val nextItem = target.mediaItems.getOrNull(target.startIndex) ?: return null
+        val currentUri = currentItem.localConfiguration?.uri ?: return null
+        val nextUri = nextItem.localConfiguration?.uri ?: return null
+        val audibleEndMs = silenceAnalyzer.audibleEndMs(currentUri, durationMs) ?: return null
+        val nextStartMs = silenceAnalyzer.audibleStartMs(nextUri) ?: 0L
+        val trailingSilenceMs = (durationMs - audibleEndMs).coerceAtLeast(0L)
+        val hasMeaningfulTailSilence = trailingSilenceMs >= DJ_EXPERT_MIN_TRAILING_SILENCE_MS
+        val triggerPositionMs = if (hasMeaningfulTailSilence) {
+            audibleEndMs - DJ_EXPERT_HANDOFF_LEAD_MS
+        } else {
+            audibleEndMs - requestedMixDurationMs
+        }.coerceIn(0L, durationMs)
+        val mixDurationMs = if (hasMeaningfulTailSilence) {
+            requestedMixDurationMs.coerceAtMost(DJ_EXPERT_SILENCE_HANDOFF_FADE_MS)
+        } else {
+            requestedMixDurationMs
+        }.coerceAtLeast(MIN_DJ_FADE_MS)
+
+        return ExpertDjPlan(
+            target = target.copy(startPositionMs = nextStartMs),
+            triggerPositionMs = triggerPositionMs,
+            mixDurationMs = mixDurationMs,
+        )
+    }
+
+    private fun classicDjPlan(target: ServiceDjTarget, durationMs: Long, requestedMixDurationMs: Long): ExpertDjPlan {
+        return ExpertDjPlan(
+            target = target,
+            triggerPositionMs = (durationMs - requestedMixDurationMs).coerceAtLeast(0L),
+            mixDurationMs = requestedMixDurationMs.coerceAtLeast(MIN_DJ_FADE_MS),
+        )
+    }
+
+    private fun isSameExpertTransitionContext(player: ExoPlayer, currentMediaId: String): Boolean {
+        return djEnabled &&
+            djMixMode == DjMixMode.Expert &&
+            playbackMode != PlaybackMode.RepeatCurrent &&
+            activePlayer === player &&
+            player.isPlaying &&
+            player.currentMediaItem?.mediaId == currentMediaId
     }
 
     private suspend fun runDjTransition(
@@ -286,7 +401,7 @@ class MusicService : MediaSessionService() {
         standbyPlayer.clearMediaItems()
         standbyPlayer.setAudioAttributes(musicAudioAttributes, false)
         standbyPlayer.volume = 0f
-        standbyPlayer.setMediaItems(target.mediaItems, target.startIndex, 0L)
+        standbyPlayer.setMediaItems(target.mediaItems, target.startIndex, target.startPositionMs.coerceAtLeast(0L))
         applyPlaybackModeToPlayer(standbyPlayer)
         standbyPlayer.prepare()
         preloadedForMediaId = currentMediaId
@@ -442,10 +557,18 @@ class MusicService : MediaSessionService() {
         val mediaItems: List<MediaItem>,
         val startIndex: Int,
         val mediaId: String,
+        val startPositionMs: Long = 0L,
+    )
+
+    private data class ExpertDjPlan(
+        val target: ServiceDjTarget,
+        val triggerPositionMs: Long,
+        val mixDurationMs: Long,
     )
 
     private data class DjServiceConfig(
         val enabled: Boolean,
+        val mixMode: DjMixMode,
         val mixDurationSeconds: Int,
         val playbackMode: PlaybackMode,
     )
@@ -454,13 +577,15 @@ class MusicService : MediaSessionService() {
         private var activeInstance: MusicService? = null
         private var latestDjConfig = DjServiceConfig(
             enabled = false,
+            mixMode = DjMixMode.Classic,
             mixDurationSeconds = 8,
             playbackMode = PlaybackMode.Ordered,
         )
 
-        fun updateDjConfig(enabled: Boolean, mixDurationSeconds: Int, playbackMode: PlaybackMode) {
+        fun updateDjConfig(enabled: Boolean, mixMode: DjMixMode, mixDurationSeconds: Int, playbackMode: PlaybackMode) {
             val config = DjServiceConfig(
                 enabled = enabled,
+                mixMode = mixMode,
                 mixDurationSeconds = mixDurationSeconds,
                 playbackMode = playbackMode,
             )
@@ -476,6 +601,12 @@ class MusicService : MediaSessionService() {
         private const val MIN_DJ_FADE_MS = 1_000L
         private const val DJ_PRELOAD_LEAD_MS = 2_000L
         private const val DJ_HANDOFF_SAFETY_MS = 700L
+        private const val DJ_EXPERT_ANALYSIS_LEAD_MS = 30_000L
+        private const val DJ_EXPERT_MIN_TRAILING_SILENCE_MS = 1_500L
+        private const val DJ_EXPERT_HANDOFF_LEAD_MS = 150L
+        private const val DJ_EXPERT_SILENCE_HANDOFF_FADE_MS = 2_500L
+        private const val DJ_EXPERT_TRIGGER_TOLERANCE_MS = 120L
+        private const val DJ_EXPERT_WAIT_MAX_MS = 500L
         private const val DJ_FADE_STEPS = 24
         private const val DJ_INCOMING_READY_TIMEOUT_MS = 1_500L
         private const val DJ_READY_POLL_MS = 50L

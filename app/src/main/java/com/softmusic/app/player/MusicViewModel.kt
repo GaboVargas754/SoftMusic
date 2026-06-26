@@ -101,6 +101,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         hiddenFolderPaths: Set<String>,
         excludeSmallAudios: Boolean,
         djModeEnabled: Boolean,
+        djMixMode: DjMixMode,
         djMixDurationSeconds: Int,
     ) {
         _uiState.update { current ->
@@ -119,6 +120,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 playbackMode = defaultPlaybackMode,
                 sortMode = defaultSortMode,
                 djModeEnabled = djModeEnabled,
+                djMixMode = djMixMode,
                 djMixDurationSeconds = djMixDurationSeconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS),
                 shuffleEnabled = defaultPlaybackMode == PlaybackMode.Shuffle,
                 repeatSetting = defaultPlaybackMode.toRepeatSetting(),
@@ -129,6 +131,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         MusicService.updateDjConfig(
             enabled = djModeEnabled,
+            mixMode = djMixMode,
             mixDurationSeconds = djMixDurationSeconds,
             playbackMode = defaultPlaybackMode,
         )
@@ -430,6 +433,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         MusicService.updateDjConfig(
             enabled = _uiState.value.djModeEnabled,
+            mixMode = _uiState.value.djMixMode,
             mixDurationSeconds = _uiState.value.djMixDurationSeconds,
             playbackMode = playbackMode,
         )
@@ -544,15 +548,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         syncQueueOrder()
     }
 
-    fun setDjModeConfig(enabled: Boolean, mixDurationSeconds: Int) {
+    fun setDjModeConfig(enabled: Boolean, mixMode: DjMixMode, mixDurationSeconds: Int) {
         _uiState.update {
             it.copy(
                 djModeEnabled = enabled,
+                djMixMode = mixMode,
                 djMixDurationSeconds = mixDurationSeconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS),
             )
         }
         MusicService.updateDjConfig(
             enabled = enabled,
+            mixMode = mixMode,
             mixDurationSeconds = mixDurationSeconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS),
             playbackMode = _uiState.value.playbackMode,
         )

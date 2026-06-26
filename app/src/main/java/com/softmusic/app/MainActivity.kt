@@ -33,6 +33,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.softmusic.app.player.DjMixMode
 import com.softmusic.app.player.MusicService
 import com.softmusic.app.player.MusicViewModel
 import com.softmusic.app.player.PlaybackMode
@@ -57,6 +58,7 @@ class MainActivity : ComponentActivity() {
             var hiddenFolderPaths by remember { mutableStateOf(preferences.readHiddenFolderPaths()) }
             var excludeSmallAudios by remember { mutableStateOf(preferences.getBoolean(KEY_EXCLUDE_SMALL_AUDIOS, true)) }
             var djModeEnabled by remember { mutableStateOf(preferences.getBoolean(KEY_DJ_MODE_ENABLED, false)) }
+            var djMixMode by remember { mutableStateOf(preferences.readDjMixMode()) }
             var djMixDurationSeconds by remember { mutableStateOf(preferences.readDjMixDurationSeconds()) }
             var audioPermissionRequested by remember { mutableStateOf(preferences.getBoolean(KEY_AUDIO_PERMISSION_REQUESTED, false)) }
 
@@ -96,6 +98,7 @@ class MainActivity : ComponentActivity() {
                             hiddenFolderPaths = hiddenFolderPaths,
                             excludeSmallAudios = excludeSmallAudios,
                             djModeEnabled = djModeEnabled,
+                            djMixMode = djMixMode,
                             djMixDurationSeconds = djMixDurationSeconds,
                             onThemeModeChange = { mode ->
                                 themeMode = mode
@@ -148,6 +151,10 @@ class MainActivity : ComponentActivity() {
                             onDjModeChange = { enabled ->
                                 djModeEnabled = enabled
                                 preferences.edit().putBoolean(KEY_DJ_MODE_ENABLED, enabled).apply()
+                            },
+                            onDjMixModeChange = { mode ->
+                                djMixMode = mode
+                                preferences.edit().putString(KEY_DJ_MIX_MODE, mode.name).apply()
                             },
                             onDjMixDurationChange = { seconds ->
                                 djMixDurationSeconds = seconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
@@ -229,6 +236,7 @@ private fun SoftMusicRoot(
     hiddenFolderPaths: Set<String>,
     excludeSmallAudios: Boolean,
     djModeEnabled: Boolean,
+    djMixMode: DjMixMode,
     djMixDurationSeconds: Int,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onColorPaletteChange: (AppColorPalette) -> Unit,
@@ -240,6 +248,7 @@ private fun SoftMusicRoot(
     onHiddenFolderPathsChange: (Set<String>) -> Unit,
     onExcludeSmallAudiosChange: (Boolean) -> Unit,
     onDjModeChange: (Boolean) -> Unit,
+    onDjMixModeChange: (DjMixMode) -> Unit,
     onDjMixDurationChange: (Int) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
@@ -288,6 +297,7 @@ private fun SoftMusicRoot(
             hiddenFolderPaths = hiddenFolderPaths,
             excludeSmallAudios = excludeSmallAudios,
             djModeEnabled = djModeEnabled,
+            djMixMode = djMixMode,
             djMixDurationSeconds = djMixDurationSeconds,
         )
         defaultsApplied = true
@@ -352,6 +362,7 @@ private fun SoftMusicRoot(
             defaultSortMode = defaultSortMode,
             fontScale = fontScale,
             djModeEnabled = djModeEnabled,
+            djMixMode = djMixMode,
             djMixDurationSeconds = djMixDurationSeconds,
             onThemeModeChange = onThemeModeChange,
             onColorPaletteChange = onColorPaletteChange,
@@ -375,12 +386,16 @@ private fun SoftMusicRoot(
             },
             onDjModeChange = { enabled ->
                 onDjModeChange(enabled)
-                viewModel.setDjModeConfig(enabled, djMixDurationSeconds)
+                viewModel.setDjModeConfig(enabled, djMixMode, djMixDurationSeconds)
+            },
+            onDjMixModeChange = { mode ->
+                onDjMixModeChange(mode)
+                viewModel.setDjModeConfig(djModeEnabled, mode, djMixDurationSeconds)
             },
             onDjMixDurationChange = { seconds ->
                 val safeSeconds = seconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
                 onDjMixDurationChange(safeSeconds)
-                viewModel.setDjModeConfig(djModeEnabled, safeSeconds)
+                viewModel.setDjModeConfig(djModeEnabled, djMixMode, safeSeconds)
             },
             onOpenNotificationSettings = onOpenNotificationSettings,
             onOpenAppSettings = onOpenAppSettings,
@@ -403,6 +418,7 @@ private const val KEY_FONT_SCALE = "font_scale"
 private const val KEY_HIDDEN_FOLDER_PATHS = "hidden_folder_paths"
 private const val KEY_EXCLUDE_SMALL_AUDIOS = "exclude_small_audios"
 private const val KEY_DJ_MODE_ENABLED = "dj_mode_enabled"
+private const val KEY_DJ_MIX_MODE = "dj_mix_mode"
 private const val KEY_DJ_MIX_DURATION_SECONDS = "dj_mix_duration_seconds"
 private const val KEY_AUDIO_PERMISSION_REQUESTED = "audio_permission_requested"
 private const val MIN_FONT_SCALE = 0.80f
@@ -440,6 +456,11 @@ private fun SharedPreferences.readFontScale(): Float = getFloat(KEY_FONT_SCALE, 
 private fun SharedPreferences.readHiddenFolderPaths(): Set<String> = getStringSet(KEY_HIDDEN_FOLDER_PATHS, emptySet())
     .orEmpty()
     .toSet()
+
+private fun SharedPreferences.readDjMixMode(): DjMixMode = enumValueOrDefault(
+    value = getString(KEY_DJ_MIX_MODE, null),
+    default = DjMixMode.Classic,
+)
 
 private fun SharedPreferences.readDjMixDurationSeconds(): Int = getInt(KEY_DJ_MIX_DURATION_SECONDS, 8)
     .coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)

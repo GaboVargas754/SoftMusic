@@ -130,6 +130,7 @@ import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.Song
 import com.softmusic.app.data.isIncludedBySmallAudioFilter
 import com.softmusic.app.data.orderedSongsFrom
+import com.softmusic.app.player.DjMixMode
 import com.softmusic.app.player.PlaybackMode
 import com.softmusic.app.player.PlaybackProgressState
 import com.softmusic.app.player.PlaybackQueueSource
@@ -218,6 +219,7 @@ fun SoftMusicApp(
     defaultSortMode: SortMode,
     fontScale: Float,
     djModeEnabled: Boolean,
+    djMixMode: DjMixMode,
     djMixDurationSeconds: Int,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onColorPaletteChange: (AppColorPalette) -> Unit,
@@ -229,6 +231,7 @@ fun SoftMusicApp(
     onExcludeSmallAudiosChange: (Boolean) -> Unit,
     onHiddenFolderChange: (String, Boolean) -> Unit,
     onDjModeChange: (Boolean) -> Unit,
+    onDjMixModeChange: (DjMixMode) -> Unit,
     onDjMixDurationChange: (Int) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
@@ -451,6 +454,7 @@ fun SoftMusicApp(
                         hiddenFolderPaths = uiState.hiddenFolderPaths,
                         excludeSmallAudios = uiState.excludeSmallAudios,
                         djModeEnabled = djModeEnabled,
+                        djMixMode = djMixMode,
                         djMixDurationSeconds = djMixDurationSeconds,
                         onThemeModeChange = onThemeModeChange,
                         onColorPaletteChange = onColorPaletteChange,
@@ -464,6 +468,7 @@ fun SoftMusicApp(
                         onExcludeSmallAudiosChange = onExcludeSmallAudiosChange,
                         onHiddenFolderChange = onHiddenFolderChange,
                         onDjModeChange = onDjModeChange,
+                        onDjMixModeChange = onDjMixModeChange,
                         onDjMixDurationChange = onDjMixDurationChange,
                         onOpenNotificationSettings = onOpenNotificationSettings,
                         onOpenAppSettings = onOpenAppSettings,
@@ -537,6 +542,7 @@ fun SoftMusicApp(
                     hiddenFolderPaths = uiState.hiddenFolderPaths,
                     excludeSmallAudios = uiState.excludeSmallAudios,
                     djModeEnabled = djModeEnabled,
+                    djMixMode = djMixMode,
                     djMixDurationSeconds = djMixDurationSeconds,
                     onThemeModeChange = onThemeModeChange,
                     onColorPaletteChange = onColorPaletteChange,
@@ -550,6 +556,7 @@ fun SoftMusicApp(
                     onExcludeSmallAudiosChange = onExcludeSmallAudiosChange,
                     onHiddenFolderChange = onHiddenFolderChange,
                     onDjModeChange = onDjModeChange,
+                    onDjMixModeChange = onDjMixModeChange,
                     onDjMixDurationChange = onDjMixDurationChange,
                     onOpenNotificationSettings = onOpenNotificationSettings,
                     onOpenAppSettings = onOpenAppSettings,
@@ -2204,6 +2211,7 @@ private fun SettingsSheet(
     hiddenFolderPaths: Set<String>,
     excludeSmallAudios: Boolean,
     djModeEnabled: Boolean,
+    djMixMode: DjMixMode,
     djMixDurationSeconds: Int,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onColorPaletteChange: (AppColorPalette) -> Unit,
@@ -2217,6 +2225,7 @@ private fun SettingsSheet(
     onExcludeSmallAudiosChange: (Boolean) -> Unit,
     onHiddenFolderChange: (String, Boolean) -> Unit,
     onDjModeChange: (Boolean) -> Unit,
+    onDjMixModeChange: (DjMixMode) -> Unit,
     onDjMixDurationChange: (Int) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
@@ -2340,8 +2349,10 @@ private fun SettingsSheet(
 
             DjModeBlock(
                 enabled = djModeEnabled,
+                mixMode = djMixMode,
                 mixDurationSeconds = djMixDurationSeconds,
                 onEnabledChange = onDjModeChange,
+                onMixModeChange = onDjMixModeChange,
                 onMixDurationChange = onDjMixDurationChange,
             )
         }
@@ -2671,8 +2682,10 @@ private fun HiddenFoldersBlock(
 @Composable
 private fun DjModeBlock(
     enabled: Boolean,
+    mixMode: DjMixMode,
     mixDurationSeconds: Int,
     onEnabledChange: (Boolean) -> Unit,
+    onMixModeChange: (DjMixMode) -> Unit,
     onMixDurationChange: (Int) -> Unit,
 ) {
     Column(
@@ -2706,6 +2719,47 @@ private fun DjModeBlock(
             Switch(
                 checked = enabled,
                 onCheckedChange = onEnabledChange,
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Tipo de mezcla",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DjMixMode.entries.forEach { mode ->
+                    val selected = mixMode == mode
+                    OutlinedButton(
+                        onClick = { onMixModeChange(mode) },
+                        enabled = enabled,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (selected) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            } else {
+                                Color.Transparent
+                            },
+                        ),
+                    ) {
+                        Text(mode.label)
+                    }
+                }
+            }
+            Text(
+                text = if (mixMode == DjMixMode.Expert) {
+                    "Analiza silencios al final e inicio de canciones para saltar partes mudas. Si falla, usa el modo clásico."
+                } else {
+                    "Mezcla por tiempo fijo antes de que termine la canción."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 

@@ -26,6 +26,7 @@ data class PlayerUiState(
     val playbackMode: PlaybackMode = PlaybackMode.Ordered,
     val sortMode: SortMode = SortMode.Recent,
     val djModeEnabled: Boolean = false,
+    val djMixMode: DjMixMode = DjMixMode.Classic,
     val djMixDurationSeconds: Int = 8,
     val hasController: Boolean = false,
 )
