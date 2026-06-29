@@ -235,6 +235,10 @@ fun SoftMusicApp(
     onDjMixDurationChange: (Int) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
+    onOpenDonation: () -> Unit,
+    isCheckingForUpdates: Boolean,
+    updateCheckStatus: String?,
+    onCheckForUpdates: () -> Unit,
     onCloseApp: () -> Unit,
 ) {
     var showPlayer by rememberSaveable { mutableStateOf(false) }
@@ -389,6 +393,7 @@ fun SoftMusicApp(
                         .padding(padding),
                     uiState = uiState,
                     onPlayQueuedSong = onPlayQueuedSong,
+                    onPlayQueue = onPlayQueue,
                     onToggleFavorite = ::toggleFavoriteWithAlert,
                     onPlayNext = onPlayNext,
                     onPlayAtEnd = onPlayAtEnd,
@@ -472,6 +477,10 @@ fun SoftMusicApp(
                         onDjMixDurationChange = onDjMixDurationChange,
                         onOpenNotificationSettings = onOpenNotificationSettings,
                         onOpenAppSettings = onOpenAppSettings,
+                        onOpenDonation = onOpenDonation,
+                        isCheckingForUpdates = isCheckingForUpdates,
+                        updateCheckStatus = updateCheckStatus,
+                        onCheckForUpdates = onCheckForUpdates,
                     )
                 }
             }
@@ -560,6 +569,10 @@ fun SoftMusicApp(
                     onDjMixDurationChange = onDjMixDurationChange,
                     onOpenNotificationSettings = onOpenNotificationSettings,
                     onOpenAppSettings = onOpenAppSettings,
+                    onOpenDonation = onOpenDonation,
+                    isCheckingForUpdates = isCheckingForUpdates,
+                    updateCheckStatus = updateCheckStatus,
+                    onCheckForUpdates = onCheckForUpdates,
                 )
             }
         }
@@ -904,12 +917,8 @@ private fun MusicLibraryScreen(
 ) {
     var selectedView by rememberSaveable { mutableStateOf(MusicLibraryView.Songs) }
     var selectedGroupTitle by rememberSaveable(selectedView, uiState.selectedFolderPath) { mutableStateOf<String?>(null) }
-    var searchQuery by rememberSaveable(uiState.selectedFolderPath) { mutableStateOf("") }
-    val searchedSongs = remember(uiState.visibleSongs, searchQuery) {
-        uiState.visibleSongs.filterBySearch(searchQuery)
-    }
-    val groups = remember(searchedSongs, selectedView, uiState.sortMode) {
-        searchedSongs.toMusicGroups(selectedView, uiState.sortMode)
+    val groups = remember(uiState.visibleSongs, selectedView, uiState.sortMode) {
+        uiState.visibleSongs.toMusicGroups(selectedView, uiState.sortMode)
     }
     val playbackGroups = remember(uiState.visibleSongs, selectedView, uiState.sortMode) {
         uiState.visibleSongs.toMusicGroups(selectedView, uiState.sortMode)
@@ -923,17 +932,19 @@ private fun MusicLibraryScreen(
         MusicLibraryView.Albums -> selectedGroup?.let { "${it.key}:$folderSourceKey" }
     }
     val displayedSongs = if (selectedView == MusicLibraryView.Songs) {
-        searchedSongs
+        uiState.visibleSongs
     } else {
         selectedGroup?.songs.orEmpty()
     }
+    val selectedArtist = if (selectedView == MusicLibraryView.Artists) selectedGroup else null
+    val selectedAlbum = if (selectedView == MusicLibraryView.Albums) selectedGroup else null
+    val isGroupDetail = selectedArtist != null || selectedAlbum != null
     val showingSongs = selectedView == MusicLibraryView.Songs || selectedGroup != null
     val playableSongs = when {
         selectedView == MusicLibraryView.Songs -> uiState.visibleSongs
         selectedGroup != null -> selectedGroup.songs
         else -> emptyList()
     }
-    val hasSearchQuery = searchQuery.isNotBlank()
     val backgroundModifier = modifier.background(MaterialTheme.colorScheme.background)
 
     BackHandler(enabled = selectedGroupTitle != null) {
@@ -949,34 +960,67 @@ private fun MusicLibraryScreen(
         }
 
         LazyColumn(
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 112.dp),
+            contentPadding = if (isGroupDetail) {
+                PaddingValues(bottom = 112.dp)
+            } else {
+                PaddingValues(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 112.dp)
+            },
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item {
-                LibraryHeader(
-                    songCount = playableSongs.size,
-                    groupCount = groups.size,
-                    selectedView = selectedView,
-                    selectedGroupTitle = selectedGroup?.title,
-                    isPlaying = uiState.isPlaying,
-                    folders = uiState.folders,
-                    selectedFolderPath = uiState.selectedFolderPath,
-                    onRefreshLibrary = onRefreshLibrary,
-                    onPlayList = {
-                        onPlayQueue(
-                            playableSongs,
-                            playbackSource,
-                            playbackSourceKey,
-                        )
-                    },
-                    onViewChange = { view ->
-                        selectedView = view
-                        selectedGroupTitle = null
-                        searchQuery = ""
-                    },
-                    onClearGroup = { selectedGroupTitle = null },
-                    onFolderChange = onFolderChange,
-                )
+                if (selectedArtist != null) {
+                    ArtistDetailHeader(
+                        artist = selectedArtist,
+                        playbackMode = uiState.playbackMode,
+                        onBack = { selectedGroupTitle = null },
+                        onPlayArtist = {
+                            onPlayQueue(
+                                playableSongs,
+                                playbackSource,
+                                playbackSourceKey,
+                            )
+                        },
+                        onPlaybackModeChange = onPlaybackModeChange,
+                    )
+                } else if (selectedAlbum != null) {
+                    AlbumDetailHeader(
+                        album = selectedAlbum,
+                        playbackMode = uiState.playbackMode,
+                        onBack = { selectedGroupTitle = null },
+                        onPlayAlbum = {
+                            onPlayQueue(
+                                playableSongs,
+                                playbackSource,
+                                playbackSourceKey,
+                            )
+                        },
+                        onPlaybackModeChange = onPlaybackModeChange,
+                    )
+                } else {
+                    LibraryHeader(
+                        songCount = playableSongs.size,
+                        groupCount = groups.size,
+                        selectedView = selectedView,
+                        selectedGroupTitle = selectedGroup?.title,
+                        isPlaying = uiState.isPlaying,
+                        folders = uiState.folders,
+                        selectedFolderPath = uiState.selectedFolderPath,
+                        onRefreshLibrary = onRefreshLibrary,
+                        onPlayList = {
+                            onPlayQueue(
+                                playableSongs,
+                                playbackSource,
+                                playbackSourceKey,
+                            )
+                        },
+                        onViewChange = { view ->
+                            selectedView = view
+                            selectedGroupTitle = null
+                        },
+                        onClearGroup = { selectedGroupTitle = null },
+                        onFolderChange = onFolderChange,
+                    )
+                }
             }
 
             if (uiState.isLoading) {
@@ -1007,59 +1051,48 @@ private fun MusicLibraryScreen(
 
             if (!uiState.isLoading && uiState.visibleSongs.isNotEmpty()) {
                 if (showingSongs) {
-                    if (displayedSongs.isEmpty() && hasSearchQuery) {
-                        item {
-                            EmptySearchResults(searchQuery = searchQuery)
-                        }
-                    } else {
-                        items(
-                            items = displayedSongs,
-                            key = { it.id },
-                            contentType = { "song" },
-                        ) { song ->
-                            Box(modifier = Modifier.animateItem()) {
-                                SongRow(
-                                    song = song,
-                                    isCurrent = uiState.currentSong?.id == song.id,
-                                    isPlaying = uiState.currentSong?.id == song.id && uiState.isPlaying,
-                                    isFavorite = song.id in uiState.favoriteSongIds,
-                                    playlists = uiState.playlists,
-                                    onClick = {
-                                        onPlayQueuedSong(
-                                            song,
-                                            playableSongs,
-                                            playbackSource,
-                                            playbackSourceKey,
-                                        )
-                                    },
-                                    onToggleFavorite = { onToggleFavorite(song.id) },
-                                    onPlayNext = { onPlayNext(song) },
-                                    onPlayAtEnd = { onPlayAtEnd(song) },
-                                    onAddToPlaylist = { playlistId -> onAddSongToPlaylist(playlistId, song.id) },
-                                )
-                            }
+                    items(
+                        items = displayedSongs,
+                        key = { it.id },
+                        contentType = { "song" },
+                    ) { song ->
+                        Box(
+                            modifier = Modifier
+                                .animateItem()
+                                .then(if (isGroupDetail) Modifier.padding(horizontal = 20.dp) else Modifier),
+                        ) {
+                            SongRow(
+                                song = song,
+                                isCurrent = uiState.currentSong?.id == song.id,
+                                isPlaying = uiState.currentSong?.id == song.id && uiState.isPlaying,
+                                isFavorite = song.id in uiState.favoriteSongIds,
+                                playlists = uiState.playlists,
+                                onClick = {
+                                    onPlayQueuedSong(
+                                        song,
+                                        playableSongs,
+                                        playbackSource,
+                                        playbackSourceKey,
+                                    )
+                                },
+                                onToggleFavorite = { onToggleFavorite(song.id) },
+                                onPlayNext = { onPlayNext(song) },
+                                onPlayAtEnd = { onPlayAtEnd(song) },
+                                onAddToPlaylist = { playlistId -> onAddSongToPlaylist(playlistId, song.id) },
+                            )
                         }
                     }
                 } else {
-                    if (groups.isEmpty() && hasSearchQuery) {
-                        item {
-                            EmptySearchResults(searchQuery = searchQuery)
-                        }
-                    } else {
-                        items(
-                            items = groups,
-                            key = { it.key },
-                            contentType = { "group" },
-                        ) { group ->
-                            Box(modifier = Modifier.animateItem()) {
-                                MusicGroupRow(
-                                    group = group,
-                                    onClick = {
-                                        searchQuery = ""
-                                        selectedGroupTitle = group.title
-                                    },
-                                )
-                            }
+                    items(
+                        items = groups,
+                        key = { it.key },
+                        contentType = { "group" },
+                    ) { group ->
+                        Box(modifier = Modifier.animateItem()) {
+                            MusicGroupRow(
+                                group = group,
+                                onClick = { selectedGroupTitle = group.title },
+                            )
                         }
                     }
                 }
@@ -1073,6 +1106,7 @@ private fun SearchLibraryScreen(
     modifier: Modifier = Modifier,
     uiState: PlayerUiState,
     onPlayQueuedSong: (Song, List<Song>, PlaybackQueueSource, String?) -> Unit,
+    onPlayQueue: (List<Song>, PlaybackQueueSource, String?) -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onPlayNext: (Song) -> Unit,
     onPlayAtEnd: (Song) -> Unit,
@@ -1085,6 +1119,25 @@ private fun SearchLibraryScreen(
     val searchedSongs = remember(librarySongs, searchQuery) {
         if (searchQuery.isBlank()) emptyList() else librarySongs.filterBySearch(searchQuery)
     }
+    val searchedArtists = remember(librarySongs, searchQuery, uiState.sortMode) {
+        if (searchQuery.isBlank()) {
+            emptyList()
+        } else {
+            librarySongs
+                .toMusicGroups(MusicLibraryView.Artists, uiState.sortMode)
+                .filterByGroupSearch(searchQuery)
+        }
+    }
+    val searchedAlbums = remember(librarySongs, searchQuery, uiState.sortMode) {
+        if (searchQuery.isBlank()) {
+            emptyList()
+        } else {
+            librarySongs
+                .toMusicGroups(MusicLibraryView.Albums, uiState.sortMode)
+                .filterByGroupSearch(searchQuery)
+        }
+    }
+    val hasAnyResult = searchedArtists.isNotEmpty() || searchedAlbums.isNotEmpty() || searchedSongs.isNotEmpty()
 
     Box(modifier = modifier.background(MaterialTheme.colorScheme.background)) {
         LazyColumn(
@@ -1114,41 +1167,97 @@ private fun SearchLibraryScreen(
                         body = "Encuentra canciones por título, artista, álbum o carpeta.",
                     )
                 }
-            } else if (searchedSongs.isEmpty()) {
+            } else if (!hasAnyResult) {
                 item {
                     EmptySearchResults(searchQuery = searchQuery)
                 }
             } else {
-                items(
-                    items = searchedSongs,
-                    key = { it.id },
-                    contentType = { "song" },
-                ) { song ->
-                    Box(modifier = Modifier.animateItem()) {
-                        SongRow(
-                            song = song,
-                            isCurrent = uiState.currentSong?.id == song.id,
-                            isPlaying = uiState.currentSong?.id == song.id && uiState.isPlaying,
-                            isFavorite = song.id in uiState.favoriteSongIds,
-                            playlists = uiState.playlists,
-                            onClick = {
-                                onPlayQueuedSong(
-                                    song,
-                                    searchedSongs,
-                                    PlaybackQueueSource.Songs,
-                                    "search",
-                                )
-                            },
-                            onToggleFavorite = { onToggleFavorite(song.id) },
-                            onPlayNext = { onPlayNext(song) },
-                            onPlayAtEnd = { onPlayAtEnd(song) },
-                            onAddToPlaylist = { playlistId -> onAddSongToPlaylist(playlistId, song.id) },
-                        )
+                if (searchedArtists.isNotEmpty()) {
+                    item { SearchSectionTitle("Artistas") }
+                    items(
+                        items = searchedArtists,
+                        key = { "artist:${it.key}" },
+                        contentType = { "artist" },
+                    ) { group ->
+                        Box(modifier = Modifier.animateItem()) {
+                            MusicGroupRow(
+                                group = group,
+                                onClick = {
+                                    onPlayQueue(
+                                        group.songs,
+                                        PlaybackQueueSource.Artist,
+                                        "search:${group.key}",
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                if (searchedAlbums.isNotEmpty()) {
+                    item { SearchSectionTitle("Álbumes") }
+                    items(
+                        items = searchedAlbums,
+                        key = { "album:${it.key}" },
+                        contentType = { "album" },
+                    ) { group ->
+                        Box(modifier = Modifier.animateItem()) {
+                            MusicGroupRow(
+                                group = group,
+                                onClick = {
+                                    onPlayQueue(
+                                        group.songs,
+                                        PlaybackQueueSource.Album,
+                                        "search:${group.key}",
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                if (searchedSongs.isNotEmpty()) {
+                    item { SearchSectionTitle("Canciones") }
+                    items(
+                        items = searchedSongs,
+                        key = { it.id },
+                        contentType = { "song" },
+                    ) { song ->
+                        Box(modifier = Modifier.animateItem()) {
+                            SongRow(
+                                song = song,
+                                isCurrent = uiState.currentSong?.id == song.id,
+                                isPlaying = uiState.currentSong?.id == song.id && uiState.isPlaying,
+                                isFavorite = song.id in uiState.favoriteSongIds,
+                                playlists = uiState.playlists,
+                                onClick = {
+                                    onPlayQueuedSong(
+                                        song,
+                                        searchedSongs,
+                                        PlaybackQueueSource.Songs,
+                                        "search",
+                                    )
+                                },
+                                onToggleFavorite = { onToggleFavorite(song.id) },
+                                onPlayNext = { onPlayNext(song) },
+                                onPlayAtEnd = { onPlayAtEnd(song) },
+                                onAddToPlaylist = { playlistId -> onAddSongToPlaylist(playlistId, song.id) },
+                            )
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SearchSectionTitle(title: String) {
+    Text(
+        text = title,
+        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
 }
 
 @Composable
@@ -1435,34 +1544,23 @@ private fun PlaylistDetailHeader(
     onPlayList: () -> Unit,
     onPlaybackModeChange: (PlaybackMode) -> Unit,
 ) {
+    val firstSong = songs.firstOrNull()
     val totalDurationMs = remember(songs) { songs.sumOf { it.durationMs.coerceAtLeast(0L) } }
     val totalDurationLabel = if (totalDurationMs > 0L) formatDuration(totalDurationMs) else null
     val metadata = listOfNotNull(
         songs.size.songCountLabel(),
         totalDurationLabel,
     ).joinToString(" • ")
-    val gradient = Brush.linearGradient(
-        colors = listOf(
-            Color(0xFF7B61FF),
-            Color(0xFF5F9BFF),
-            Color(0xFF4DD0C0),
-            Color(0xFF1DB954),
-            Color(0xFFFFCC4D),
-            Color(0xFFFFB15F),
-            Color(0xFFFF6B6B),
-            Color(0xFFFF79B0),
-        ),
-        start = Offset.Zero,
-        end = Offset(980f, 760f),
-    )
-
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(360.dp)
-                .background(gradient),
+                .height(440.dp),
         ) {
+            PlaylistMosaicBackground(
+                modifier = Modifier.fillMaxSize(),
+                bottomColor = MaterialTheme.colorScheme.background,
+            )
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1499,6 +1597,15 @@ private fun PlaylistDetailHeader(
                     .padding(horizontal = 20.dp, vertical = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (firstSong != null) {
+                    Artwork(
+                        song = firstSong,
+                        modifier = Modifier
+                            .size(148.dp)
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(12.dp)),
+                        rounded = 12.dp,
+                    )
+                }
                 Text(
                     text = "playlist",
                     color = Color.White.copy(alpha = 0.84f),
@@ -1582,6 +1689,398 @@ private fun PlaylistDetailHeader(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ArtistDetailHeader(
+    artist: MusicGroup,
+    playbackMode: PlaybackMode,
+    onBack: () -> Unit,
+    onPlayArtist: () -> Unit,
+    onPlaybackModeChange: (PlaybackMode) -> Unit,
+) {
+    val songs = artist.songs
+    val firstSong = songs.firstOrNull()
+    val albumCount = remember(songs) { songs.map { it.album }.distinct().size }
+    val totalDurationMs = remember(songs) { songs.sumOf { it.durationMs.coerceAtLeast(0L) } }
+    val totalDurationLabel = if (totalDurationMs > 0L) formatDuration(totalDurationMs) else null
+    val metadata = listOfNotNull(
+        songs.size.songCountLabel(),
+        albumCount.albumCountLabel(),
+        totalDurationLabel,
+    ).joinToString(" • ")
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(440.dp),
+        ) {
+            PlaylistMosaicBackground(
+                modifier = Modifier.fillMaxSize(),
+                bottomColor = MaterialTheme.colorScheme.background,
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.34f),
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                            ),
+                        ),
+                    ),
+            )
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(14.dp)
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.28f)),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Volver",
+                    tint = Color.White,
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (firstSong != null) {
+                    Artwork(
+                        song = firstSong,
+                        modifier = Modifier
+                            .size(148.dp)
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(12.dp)),
+                        rounded = 12.dp,
+                    )
+                }
+                Text(
+                    text = "artista",
+                    color = Color.White.copy(alpha = 0.84f),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = artist.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "${albumCount.albumCountLabel()} en tu biblioteca",
+                    color = Color.White.copy(alpha = 0.78f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "SoftMusic • $metadata",
+                    color = Color.White.copy(alpha = 0.74f),
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(
+                onClick = {
+                    onPlaybackModeChange(
+                        if (playbackMode == PlaybackMode.Shuffle) PlaybackMode.Ordered else PlaybackMode.Shuffle,
+                    )
+                },
+                enabled = songs.isNotEmpty(),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Shuffle,
+                    contentDescription = "Alternar aleatorio",
+                    tint = if (playbackMode == PlaybackMode.Shuffle) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = onPlayArtist,
+                enabled = songs.isNotEmpty(),
+                modifier = Modifier
+                    .size(68.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (songs.isNotEmpty()) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                    ),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = "Reproducir artista",
+                    tint = if (songs.isNotEmpty()) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.size(34.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlbumDetailHeader(
+    album: MusicGroup,
+    playbackMode: PlaybackMode,
+    onBack: () -> Unit,
+    onPlayAlbum: () -> Unit,
+    onPlaybackModeChange: (PlaybackMode) -> Unit,
+) {
+    val songs = album.songs
+    val firstSong = songs.firstOrNull()
+    val totalDurationMs = remember(songs) { songs.sumOf { it.durationMs.coerceAtLeast(0L) } }
+    val totalDurationLabel = if (totalDurationMs > 0L) formatDuration(totalDurationMs) else null
+    val metadata = listOfNotNull(
+        songs.size.songCountLabel(),
+        totalDurationLabel,
+    ).joinToString(" • ")
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(440.dp),
+        ) {
+            PlaylistMosaicBackground(
+                modifier = Modifier.fillMaxSize(),
+                bottomColor = MaterialTheme.colorScheme.background,
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.34f),
+                                MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                            ),
+                        ),
+                    ),
+            )
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(14.dp)
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.28f)),
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Volver",
+                    tint = Color.White,
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (firstSong != null) {
+                    Artwork(
+                        song = firstSong,
+                        modifier = Modifier
+                            .size(148.dp)
+                            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(12.dp)),
+                        rounded = 12.dp,
+                    )
+                }
+                Text(
+                    text = "álbum",
+                    color = Color.White.copy(alpha = 0.84f),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = album.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = album.subtitle,
+                    color = Color.White.copy(alpha = 0.78f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "SoftMusic • $metadata",
+                    color = Color.White.copy(alpha = 0.74f),
+                    style = MaterialTheme.typography.labelLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(
+                onClick = {
+                    onPlaybackModeChange(
+                        if (playbackMode == PlaybackMode.Shuffle) PlaybackMode.Ordered else PlaybackMode.Shuffle,
+                    )
+                },
+                enabled = songs.isNotEmpty(),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Shuffle,
+                    contentDescription = "Alternar aleatorio",
+                    tint = if (playbackMode == PlaybackMode.Shuffle) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = onPlayAlbum,
+                enabled = songs.isNotEmpty(),
+                modifier = Modifier
+                    .size(68.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (songs.isNotEmpty()) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                    ),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.PlayArrow,
+                    contentDescription = "Reproducir álbum",
+                    tint = if (songs.isNotEmpty()) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.size(34.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistMosaicBackground(
+    modifier: Modifier = Modifier,
+    bottomColor: Color,
+) {
+    Canvas(modifier = modifier) {
+        val width = size.width
+        val height = size.height
+        val scaleX = width / 1200f
+        val scaleY = height / 1200f
+
+        drawRect(
+            brush = Brush.linearGradient(
+                colorStops = arrayOf(
+                    0f to Color(0xFFFF6A00),
+                    0.25f to Color(0xFFFFD500),
+                    0.45f to Color(0xFF54E346),
+                    0.65f to Color(0xFF00C8FF),
+                    0.85f to Color(0xFF3454FF),
+                    1f to Color(0xFF9B00FF),
+                ),
+                start = Offset.Zero,
+                end = Offset(width, height),
+            ),
+        )
+
+        drawPath(
+            path = Path().apply {
+                moveTo(0f, 100f * scaleY)
+                cubicTo(180f * scaleX, 180f * scaleY, 140f * scaleX, 380f * scaleY, 330f * scaleX, 560f * scaleY)
+                cubicTo(520f * scaleX, 740f * scaleY, 760f * scaleX, 760f * scaleY, 950f * scaleX, 850f * scaleY)
+                cubicTo(1100f * scaleX, 920f * scaleY, 1160f * scaleX, 1060f * scaleY, 1200f * scaleX, 1200f * scaleY)
+                lineTo(1200f * scaleX, 0f)
+                lineTo(0f, 0f)
+                close()
+            },
+            color = Color.White.copy(alpha = 0.08f),
+        )
+
+        drawPath(
+            path = Path().apply {
+                moveTo(0f, 680f * scaleY)
+                cubicTo(180f * scaleX, 700f * scaleY, 260f * scaleX, 900f * scaleY, 460f * scaleX, 990f * scaleY)
+                cubicTo(650f * scaleX, 1075f * scaleY, 900f * scaleX, 990f * scaleY, 1200f * scaleX, 1160f * scaleY)
+                lineTo(1200f * scaleX, 1200f * scaleY)
+                lineTo(0f, 1200f * scaleY)
+                close()
+            },
+            color = Color.White.copy(alpha = 0.07f),
+        )
+
+        drawRect(
+            brush = Brush.radialGradient(
+                colorStops = arrayOf(
+                    0f to Color.White.copy(alpha = 0.22f),
+                    1f to Color.Transparent,
+                ),
+                center = Offset(width * 0.55f, height * 0.45f),
+                radius = max(width, height) * 0.55f,
+            ),
+        )
+
+        drawRect(
+            brush = Brush.verticalGradient(
+                colorStops = arrayOf(
+                    0f to Color.Transparent,
+                    0.72f to Color.Transparent,
+                    1f to bottomColor,
+                ),
+            ),
+        )
     }
 }
 
@@ -2229,6 +2728,10 @@ private fun SettingsSheet(
     onDjMixDurationChange: (Int) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
+    onOpenDonation: () -> Unit,
+    isCheckingForUpdates: Boolean,
+    updateCheckStatus: String?,
+    onCheckForUpdates: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -2250,6 +2753,24 @@ private fun SettingsSheet(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+
+        SettingsSection(
+            title = "Actualizaciones",
+            subtitle = "Comprueba si hay una versión nueva disponible.",
+        ) {
+            UpdateCheckBlock(
+                isCheckingForUpdates = isCheckingForUpdates,
+                updateCheckStatus = updateCheckStatus,
+                onCheckForUpdates = onCheckForUpdates,
+            )
+        }
+
+        SettingsSection(
+            title = "Donar",
+            subtitle = "Apoya el desarrollo de SoftMusic.",
+        ) {
+            DonationBlock(onOpenDonation = onOpenDonation)
         }
 
         SettingsSection(
@@ -2394,6 +2915,85 @@ private fun SettingsSheet(
         }
 
         Spacer(modifier = Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun UpdateCheckBlock(
+    isCheckingForUpdates: Boolean,
+    updateCheckStatus: String?,
+    onCheckForUpdates: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = "Buscar actualizaciones",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Comprueba si existe una APK más reciente para instalar.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (updateCheckStatus != null) {
+                Text(
+                    text = updateCheckStatus,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+        OutlinedButton(
+            onClick = onCheckForUpdates,
+            enabled = !isCheckingForUpdates,
+        ) {
+            Text(if (isCheckingForUpdates) "Buscando..." else "Buscar")
+        }
+    }
+}
+
+@Composable
+private fun DonationBlock(onOpenDonation: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = "Invitar un café",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                text = "Si disfrutas SoftMusic, puedes apoyar sus mejoras.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedButton(onClick = onOpenDonation) {
+            Text("Donar")
+        }
     }
 }
 
@@ -4678,6 +5278,13 @@ private fun List<MusicPlaylist>.filterByPlaylistSearch(query: String): List<Musi
     if (cleanQuery.isBlank()) return this
 
     return filter { playlist -> playlist.name.normalizedSearchText().contains(cleanQuery) }
+}
+
+private fun List<MusicGroup>.filterByGroupSearch(query: String): List<MusicGroup> {
+    val cleanQuery = query.normalizedSearchText()
+    if (cleanQuery.isBlank()) return this
+
+    return filter { group -> group.title.normalizedSearchText().contains(cleanQuery) }
 }
 
 private fun String.normalizedSearchText(): String {

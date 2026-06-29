@@ -14,8 +14,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -23,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -42,6 +47,9 @@ import com.softmusic.app.ui.SoftMusicApp
 import com.softmusic.app.ui.theme.AppColorPalette
 import com.softmusic.app.ui.theme.AppThemeMode
 import com.softmusic.app.ui.theme.SoftMusicTheme
+import com.softmusic.app.update.AppUpdateChecker
+import com.softmusic.app.update.AppUpdateInfo
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,6 +69,42 @@ class MainActivity : ComponentActivity() {
             var djMixMode by remember { mutableStateOf(preferences.readDjMixMode()) }
             var djMixDurationSeconds by remember { mutableStateOf(preferences.readDjMixDurationSeconds()) }
             var audioPermissionRequested by remember { mutableStateOf(preferences.getBoolean(KEY_AUDIO_PERMISSION_REQUESTED, false)) }
+            var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+            var isCheckingForUpdates by remember { mutableStateOf(false) }
+            var updateCheckStatus by remember { mutableStateOf<String?>(null) }
+            val updateCheckScope = rememberCoroutineScope()
+
+            fun showAvailableUpdate(updateInfo: AppUpdateInfo?, ignoreSkippedVersion: Boolean): Boolean {
+                val skippedVersionCode = preferences.getLong(KEY_SKIPPED_UPDATE_VERSION_CODE, -1L)
+                if (
+                    updateInfo != null &&
+                    (ignoreSkippedVersion || updateInfo.required || updateInfo.versionCode != skippedVersionCode)
+                ) {
+                    availableUpdate = updateInfo
+                    updateCheckStatus = null
+                    return true
+                }
+                return false
+            }
+
+            fun checkForUpdatesManually() {
+                if (isCheckingForUpdates) return
+                isCheckingForUpdates = true
+                updateCheckStatus = null
+                updateCheckScope.launch {
+                    val updateInfo = AppUpdateChecker.checkForUpdate()
+                    val updateFound = showAvailableUpdate(updateInfo, ignoreSkippedVersion = true)
+                    if (!updateFound) {
+                        updateCheckStatus = "No hay actualizaciones disponibles."
+                    }
+                    isCheckingForUpdates = false
+                }
+            }
+
+            LaunchedEffect(Unit) {
+                val updateInfo = AppUpdateChecker.checkForUpdate()
+                showAvailableUpdate(updateInfo, ignoreSkippedVersion = false)
+            }
 
             SoftMusicTheme(
                 themeMode = themeMode,
@@ -77,93 +121,114 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background,
                     ) {
-                    SoftMusicRoot(
-                        checkAudioPermission = ::hasAudioPermission,
-                        audioPermissionName = ::audioPermissionName,
-                        shouldShowAudioPermissionRationale = ::shouldShowAudioPermissionRationale,
-                        audioPermissionRequested = audioPermissionRequested,
-                        onAudioPermissionRequested = {
-                            audioPermissionRequested = true
-                            preferences.edit().putBoolean(KEY_AUDIO_PERMISSION_REQUESTED, true).apply()
-                        },
-                        checkNotificationPermission = ::hasNotificationPermission,
-                        notificationPermissionName = ::notificationPermissionName,
-                        themeMode = themeMode,
-                            colorPalette = colorPalette,
-                            highPerformanceMode = highPerformanceMode,
-                            defaultFolderPath = defaultFolderPath,
-                            defaultPlaybackMode = defaultPlaybackMode,
-                            defaultSortMode = defaultSortMode,
-                            fontScale = fontScale,
-                            hiddenFolderPaths = hiddenFolderPaths,
-                            excludeSmallAudios = excludeSmallAudios,
-                            djModeEnabled = djModeEnabled,
-                            djMixMode = djMixMode,
-                            djMixDurationSeconds = djMixDurationSeconds,
-                            onThemeModeChange = { mode ->
-                                themeMode = mode
-                                preferences.edit().putString(KEY_THEME_MODE, mode.name).apply()
-                            },
-                            onColorPaletteChange = { palette ->
-                                colorPalette = palette
-                                preferences.edit().putString(KEY_COLOR_PALETTE, palette.name).apply()
-                            },
-                            onHighPerformanceModeChange = { enabled ->
-                                highPerformanceMode = enabled
-                                preferences.edit().putBoolean(KEY_HIGH_PERFORMANCE_MODE, enabled).apply()
-                            },
-                            onDefaultFolderChange = { folderPath ->
-                                defaultFolderPath = folderPath
-                                preferences.edit().apply {
-                                    if (folderPath == null) {
-                                        remove(KEY_DEFAULT_FOLDER_PATH)
-                                    } else {
-                                        putString(KEY_DEFAULT_FOLDER_PATH, folderPath)
-                                    }
-                                }.apply()
-                            },
-                            onDefaultPlaybackModeChange = { playbackMode ->
-                                defaultPlaybackMode = playbackMode
-                                preferences.edit().putString(KEY_DEFAULT_PLAYBACK_MODE, playbackMode.name).apply()
-                            },
-                            onDefaultSortModeChange = { sortMode ->
-                                defaultSortMode = sortMode
-                                preferences.edit().putString(KEY_DEFAULT_SORT_MODE, sortMode.name).apply()
-                            },
-                            onFontScaleChange = { scale ->
-                                fontScale = scale.coerceIn(MIN_FONT_SCALE, MAX_FONT_SCALE)
-                                preferences.edit().putFloat(KEY_FONT_SCALE, fontScale).apply()
-                            },
-                            onHiddenFolderPathsChange = { folderPaths ->
-                                hiddenFolderPaths = folderPaths
-                                preferences.edit().apply {
-                                    putStringSet(KEY_HIDDEN_FOLDER_PATHS, folderPaths)
-                                    if (defaultFolderPath in folderPaths) {
-                                        defaultFolderPath = null
-                                        remove(KEY_DEFAULT_FOLDER_PATH)
-                                    }
-                                }.apply()
-                            },
-                            onExcludeSmallAudiosChange = { enabled ->
-                                excludeSmallAudios = enabled
-                                preferences.edit().putBoolean(KEY_EXCLUDE_SMALL_AUDIOS, enabled).apply()
-                            },
-                            onDjModeChange = { enabled ->
-                                djModeEnabled = enabled
-                                preferences.edit().putBoolean(KEY_DJ_MODE_ENABLED, enabled).apply()
-                            },
-                            onDjMixModeChange = { mode ->
-                                djMixMode = mode
-                                preferences.edit().putString(KEY_DJ_MIX_MODE, mode.name).apply()
-                            },
-                            onDjMixDurationChange = { seconds ->
-                                djMixDurationSeconds = seconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
-                                preferences.edit().putInt(KEY_DJ_MIX_DURATION_SECONDS, djMixDurationSeconds).apply()
-                            },
-                            onOpenNotificationSettings = ::openNotificationSettings,
-                            onOpenAppSettings = ::openAppSettings,
-                            onCloseApp = { closeApplication() },
-                        )
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            SoftMusicRoot(
+                                checkAudioPermission = ::hasAudioPermission,
+                                audioPermissionName = ::audioPermissionName,
+                                shouldShowAudioPermissionRationale = ::shouldShowAudioPermissionRationale,
+                                audioPermissionRequested = audioPermissionRequested,
+                                onAudioPermissionRequested = {
+                                    audioPermissionRequested = true
+                                    preferences.edit().putBoolean(KEY_AUDIO_PERMISSION_REQUESTED, true).apply()
+                                },
+                                checkNotificationPermission = ::hasNotificationPermission,
+                                notificationPermissionName = ::notificationPermissionName,
+                                themeMode = themeMode,
+                                colorPalette = colorPalette,
+                                highPerformanceMode = highPerformanceMode,
+                                defaultFolderPath = defaultFolderPath,
+                                defaultPlaybackMode = defaultPlaybackMode,
+                                defaultSortMode = defaultSortMode,
+                                fontScale = fontScale,
+                                hiddenFolderPaths = hiddenFolderPaths,
+                                excludeSmallAudios = excludeSmallAudios,
+                                djModeEnabled = djModeEnabled,
+                                djMixMode = djMixMode,
+                                djMixDurationSeconds = djMixDurationSeconds,
+                                onThemeModeChange = { mode ->
+                                    themeMode = mode
+                                    preferences.edit().putString(KEY_THEME_MODE, mode.name).apply()
+                                },
+                                onColorPaletteChange = { palette ->
+                                    colorPalette = palette
+                                    preferences.edit().putString(KEY_COLOR_PALETTE, palette.name).apply()
+                                },
+                                onHighPerformanceModeChange = { enabled ->
+                                    highPerformanceMode = enabled
+                                    preferences.edit().putBoolean(KEY_HIGH_PERFORMANCE_MODE, enabled).apply()
+                                },
+                                onDefaultFolderChange = { folderPath ->
+                                    defaultFolderPath = folderPath
+                                    preferences.edit().apply {
+                                        if (folderPath == null) {
+                                            remove(KEY_DEFAULT_FOLDER_PATH)
+                                        } else {
+                                            putString(KEY_DEFAULT_FOLDER_PATH, folderPath)
+                                        }
+                                    }.apply()
+                                },
+                                onDefaultPlaybackModeChange = { playbackMode ->
+                                    defaultPlaybackMode = playbackMode
+                                    preferences.edit().putString(KEY_DEFAULT_PLAYBACK_MODE, playbackMode.name).apply()
+                                },
+                                onDefaultSortModeChange = { sortMode ->
+                                    defaultSortMode = sortMode
+                                    preferences.edit().putString(KEY_DEFAULT_SORT_MODE, sortMode.name).apply()
+                                },
+                                onFontScaleChange = { scale ->
+                                    fontScale = scale.coerceIn(MIN_FONT_SCALE, MAX_FONT_SCALE)
+                                    preferences.edit().putFloat(KEY_FONT_SCALE, fontScale).apply()
+                                },
+                                onHiddenFolderPathsChange = { folderPaths ->
+                                    hiddenFolderPaths = folderPaths
+                                    preferences.edit().apply {
+                                        putStringSet(KEY_HIDDEN_FOLDER_PATHS, folderPaths)
+                                        if (defaultFolderPath in folderPaths) {
+                                            defaultFolderPath = null
+                                            remove(KEY_DEFAULT_FOLDER_PATH)
+                                        }
+                                    }.apply()
+                                },
+                                onExcludeSmallAudiosChange = { enabled ->
+                                    excludeSmallAudios = enabled
+                                    preferences.edit().putBoolean(KEY_EXCLUDE_SMALL_AUDIOS, enabled).apply()
+                                },
+                                onDjModeChange = { enabled ->
+                                    djModeEnabled = enabled
+                                    preferences.edit().putBoolean(KEY_DJ_MODE_ENABLED, enabled).apply()
+                                },
+                                onDjMixModeChange = { mode ->
+                                    djMixMode = mode
+                                    preferences.edit().putString(KEY_DJ_MIX_MODE, mode.name).apply()
+                                },
+                                onDjMixDurationChange = { seconds ->
+                                    djMixDurationSeconds = seconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
+                                    preferences.edit().putInt(KEY_DJ_MIX_DURATION_SECONDS, djMixDurationSeconds).apply()
+                                },
+                                onOpenNotificationSettings = ::openNotificationSettings,
+                                onOpenAppSettings = ::openAppSettings,
+                                onOpenDonation = { openExternalUrl(PAYPAL_DONATION_URL) },
+                                isCheckingForUpdates = isCheckingForUpdates,
+                                updateCheckStatus = updateCheckStatus,
+                                onCheckForUpdates = ::checkForUpdatesManually,
+                                onCloseApp = { closeApplication() },
+                            )
+                            availableUpdate?.let { updateInfo ->
+                                AppUpdateDialog(
+                                    updateInfo = updateInfo,
+                                    onUpdate = {
+                                        availableUpdate = null
+                                        openExternalUrl(updateInfo.updateUrl)
+                                    },
+                                    onDismiss = {
+                                        availableUpdate = null
+                                        preferences.edit()
+                                            .putLong(KEY_SKIPPED_UPDATE_VERSION_CODE, updateInfo.versionCode)
+                                            .apply()
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -215,6 +280,54 @@ class MainActivity : ComponentActivity() {
             .setData(Uri.parse("package:$packageName"))
         startActivity(intent)
     }
+
+    private fun openExternalUrl(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        runCatching { startActivity(intent) }
+    }
+}
+
+@Composable
+private fun AppUpdateDialog(
+    updateInfo: AppUpdateInfo,
+    onUpdate: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val releaseNotes = updateInfo.releaseNotes.takeIf { it.isNotBlank() }
+    AlertDialog(
+        onDismissRequest = {
+            if (!updateInfo.required) onDismiss()
+        },
+        title = { Text("Nueva versión disponible") },
+        text = {
+            Text(
+                buildString {
+                    append("SoftMusic ${updateInfo.versionName} ya está disponible.")
+                    if (releaseNotes != null) {
+                        append("\n\n")
+                        append(releaseNotes)
+                    }
+                    if (updateInfo.required) {
+                        append("\n\nEsta actualización es obligatoria para continuar.")
+                    }
+                },
+            )
+        },
+        confirmButton = {
+            Button(onClick = onUpdate) {
+                Text("Actualizar")
+            }
+        },
+        dismissButton = if (!updateInfo.required) {
+            {
+                OutlinedButton(onClick = onDismiss) {
+                    Text("Luego")
+                }
+            }
+        } else {
+            null
+        },
+    )
 }
 
 @Composable
@@ -252,6 +365,10 @@ private fun SoftMusicRoot(
     onDjMixDurationChange: (Int) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
+    onOpenDonation: () -> Unit,
+    isCheckingForUpdates: Boolean,
+    updateCheckStatus: String?,
+    onCheckForUpdates: () -> Unit,
     onCloseApp: () -> Unit,
 ) {
     val viewModel: MusicViewModel = viewModel()
@@ -399,6 +516,10 @@ private fun SoftMusicRoot(
             },
             onOpenNotificationSettings = onOpenNotificationSettings,
             onOpenAppSettings = onOpenAppSettings,
+            onOpenDonation = onOpenDonation,
+            isCheckingForUpdates = isCheckingForUpdates,
+            updateCheckStatus = updateCheckStatus,
+            onCheckForUpdates = onCheckForUpdates,
             onCloseApp = {
                 viewModel.shutdownPlayback()
                 onCloseApp()
@@ -421,6 +542,8 @@ private const val KEY_DJ_MODE_ENABLED = "dj_mode_enabled"
 private const val KEY_DJ_MIX_MODE = "dj_mix_mode"
 private const val KEY_DJ_MIX_DURATION_SECONDS = "dj_mix_duration_seconds"
 private const val KEY_AUDIO_PERMISSION_REQUESTED = "audio_permission_requested"
+private const val KEY_SKIPPED_UPDATE_VERSION_CODE = "skipped_update_version_code"
+private const val PAYPAL_DONATION_URL = "https://paypal.me/ChristianGabriel754"
 private const val MIN_FONT_SCALE = 0.80f
 private const val MAX_FONT_SCALE = 1.20f
 private const val MIN_DJ_MIX_SECONDS = 5
