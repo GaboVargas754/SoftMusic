@@ -413,7 +413,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun seekTo(positionMs: Long) {
-        controller?.seekTo(positionMs.coerceAtLeast(0))
+        val player = controller ?: return
+        val duration = player.duration.takeIf { it > 0 } ?: _progressState.value.durationMs
+        val safePosition = positionMs
+            .coerceAtLeast(0)
+            .coerceAtMost(duration.takeIf { it > 0 } ?: Long.MAX_VALUE)
+        updateProgress(duration, safePosition)
+        player.seekTo(safePosition)
     }
 
     fun setPlaybackMode(playbackMode: PlaybackMode) {
@@ -779,13 +785,64 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         val wasPlaying = shouldPlay ?: (player.isPlaying || player.playWhenReady)
         val currentPosition = positionMs ?: player.currentPosition.coerceAtLeast(0)
-        setActiveQueue(queue = queue, sourceSongs = sourceSongs, mode = mode, hasManualEdits = hasManualEdits)
+        val updatedIncrementally = syncPlayerQueueIncrementally(player, queue, currentId)
 
-        player.setMediaItems(queue.toMediaItems(), currentIndex, currentPosition)
-        applyPlaybackMode(mode, player)
-        player.prepare()
-        if (wasPlaying) player.play()
+        setActiveQueue(queue = queue, sourceSongs = sourceSongs, mode = mode, hasManualEdits = hasManualEdits)
+        if (updatedIncrementally) {
+            applyPlaybackMode(mode, player)
+            if (wasPlaying && !player.playWhenReady) player.play()
+        } else {
+            player.setMediaItems(queue.toMediaItems(), currentIndex, currentPosition)
+            applyPlaybackMode(mode, player)
+            player.prepare()
+            if (wasPlaying) player.play()
+        }
         updateFromPlayer(player)
+    }
+
+    private fun syncPlayerQueueIncrementally(player: Player, queue: List<Song>, currentSongId: Long?): Boolean {
+        val currentId = currentSongId?.toString() ?: return false
+        if (player.mediaItemCount == 0 || player.currentMediaItem?.mediaId != currentId) return false
+
+        val desiredIds = queue.map { it.id.toString() }
+        if (currentId !in desiredIds || desiredIds.distinct().size != desiredIds.size) return false
+        val songsByMediaId = queue.associateBy { it.id.toString() }
+
+        for (index in player.mediaItemCount - 1 downTo 0) {
+            val mediaId = player.getMediaItemAt(index).mediaId
+            if (mediaId !in songsByMediaId) {
+                if (mediaId == currentId) return false
+                player.removeMediaItem(index)
+            }
+        }
+
+        desiredIds.forEachIndexed { desiredIndex, mediaId ->
+            if (player.indexOfMediaItem(mediaId) < 0) {
+                val song = songsByMediaId[mediaId] ?: return false
+                player.addMediaItem(desiredIndex.coerceIn(0, player.mediaItemCount), song.toMediaItem())
+            }
+        }
+
+        desiredIds.forEachIndexed { desiredIndex, mediaId ->
+            val currentIndex = player.indexOfMediaItem(mediaId)
+            if (currentIndex < 0) return false
+            if (currentIndex != desiredIndex) {
+                player.moveMediaItem(currentIndex, desiredIndex)
+            }
+        }
+
+        return player.mediaItemIds() == desiredIds && player.currentMediaItem?.mediaId == currentId
+    }
+
+    private fun Player.indexOfMediaItem(mediaId: String): Int {
+        for (index in 0 until mediaItemCount) {
+            if (getMediaItemAt(index).mediaId == mediaId) return index
+        }
+        return -1
+    }
+
+    private fun Player.mediaItemIds(): List<String> = List(mediaItemCount) { index ->
+        getMediaItemAt(index).mediaId
     }
 
     private fun setActiveQueue(

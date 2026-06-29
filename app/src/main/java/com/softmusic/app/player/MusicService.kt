@@ -27,6 +27,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.sin
 
 class MusicService : MediaSessionService() {
@@ -226,7 +227,7 @@ class MusicService : MediaSessionService() {
                     val currentPosition = player.currentPosition.coerceAtLeast(0)
                     val remainingToTrigger = plan.triggerPositionMs - currentPosition
                     if (remainingToTrigger <= DJ_EXPERT_TRIGGER_TOLERANCE_MS) break
-                    if (remainingToTrigger <= DJ_PRELOAD_LEAD_MS) {
+                    if (currentPosition >= plan.preloadPositionMs) {
                         prepareStandbyPlayer(currentMediaId, plan.target)
                     }
                     delay(remainingToTrigger.coerceIn(DJ_MONITOR_INTERVAL_MS, DJ_EXPERT_WAIT_MAX_MS))
@@ -241,6 +242,8 @@ class MusicService : MediaSessionService() {
                     currentMediaId = currentMediaId,
                     target = plan.target,
                     mixDurationMs = plan.mixDurationMs.coerceAtMost(remainingMs - DJ_HANDOFF_SAFETY_MS),
+                    incomingStartVolumeScale = plan.incomingStartVolumeScale,
+                    transitionCurve = plan.transitionCurve,
                 )
             } catch (throwable: Throwable) {
                 if (throwable is CancellationException) throw throwable
@@ -261,25 +264,60 @@ class MusicService : MediaSessionService() {
         val nextItem = target.mediaItems.getOrNull(target.startIndex) ?: return null
         val currentUri = currentItem.localConfiguration?.uri ?: return null
         val nextUri = nextItem.localConfiguration?.uri ?: return null
-        val audibleEndMs = silenceAnalyzer.audibleEndMs(currentUri, durationMs) ?: return null
-        val nextStartMs = silenceAnalyzer.audibleStartMs(nextUri) ?: 0L
+        val currentProfile = silenceAnalyzer.tailProfile(currentUri, durationMs) ?: return null
+        val nextProfile = silenceAnalyzer.headProfile(nextUri)
+        val audibleEndMs = currentProfile.audibleEndMs(durationMs) ?: return null
+        val nextStartMs = nextStartPositionMs(nextProfile)
         val trailingSilenceMs = (durationMs - audibleEndMs).coerceAtLeast(0L)
         val hasMeaningfulTailSilence = trailingSilenceMs >= DJ_EXPERT_MIN_TRAILING_SILENCE_MS
-        val triggerPositionMs = if (hasMeaningfulTailSilence) {
-            audibleEndMs - DJ_EXPERT_HANDOFF_LEAD_MS
+        val maxMixDurationMs = requestedMixDurationMs.coerceAtMost(audibleEndMs.coerceAtLeast(MIN_DJ_FADE_MS))
+        val triggerPositionMs: Long
+        val mixDurationMs: Long
+
+        if (hasMeaningfulTailSilence) {
+            val silenceMixDurationMs = maxMixDurationMs
+                .coerceAtMost(DJ_EXPERT_SILENCE_HANDOFF_FADE_MS)
+                .coerceAtLeast(MIN_DJ_FADE_MS)
+            triggerPositionMs = (audibleEndMs - silenceMixDurationMs).coerceIn(0L, durationMs)
+            mixDurationMs = (audibleEndMs - triggerPositionMs)
+                .coerceIn(MIN_DJ_FADE_MS, silenceMixDurationMs)
         } else {
-            audibleEndMs - requestedMixDurationMs
-        }.coerceIn(0L, durationMs)
-        val mixDurationMs = if (hasMeaningfulTailSilence) {
-            requestedMixDurationMs.coerceAtMost(DJ_EXPERT_SILENCE_HANDOFF_FADE_MS)
-        } else {
-            requestedMixDurationMs
-        }.coerceAtLeast(MIN_DJ_FADE_MS)
+            val minNormalMixDurationMs = minOf(DJ_EXPERT_MIN_NORMAL_BLEND_MS, maxMixDurationMs)
+                .coerceAtLeast(MIN_DJ_FADE_MS)
+            val earliestTriggerMs = (audibleEndMs - maxMixDurationMs).coerceAtLeast(0L)
+            val latestTriggerMs = (audibleEndMs - minNormalMixDurationMs).coerceAtLeast(earliestTriggerMs)
+            val searchEndMs = minOf(latestTriggerMs, earliestTriggerMs + DJ_EXPERT_TRIGGER_SEARCH_MS)
+            triggerPositionMs = currentProfile.bestLowEnergyTrigger(
+                startMs = earliestTriggerMs,
+                endMs = searchEndMs,
+            ) ?: earliestTriggerMs
+            mixDurationMs = (audibleEndMs - triggerPositionMs)
+                .coerceIn(MIN_DJ_FADE_MS, maxMixDurationMs)
+        }
+
+        val incomingStartVolumeScale = nextProfile?.let { profile ->
+            incomingStartVolumeScale(
+                currentProfile = currentProfile,
+                nextProfile = profile,
+                triggerPositionMs = triggerPositionMs,
+                nextStartMs = nextStartMs,
+            )
+        } ?: 1f
+        val transitionCurve = expertTransitionCurve(
+            hasMeaningfulTailSilence = hasMeaningfulTailSilence,
+            currentProfile = currentProfile,
+            nextProfile = nextProfile,
+            triggerPositionMs = triggerPositionMs,
+            nextStartMs = nextStartMs,
+        )
 
         return ExpertDjPlan(
             target = target.copy(startPositionMs = nextStartMs),
             triggerPositionMs = triggerPositionMs,
             mixDurationMs = mixDurationMs,
+            preloadPositionMs = (triggerPositionMs - DJ_EXPERT_PRELOAD_LEAD_MS).coerceAtLeast(0L),
+            incomingStartVolumeScale = incomingStartVolumeScale,
+            transitionCurve = transitionCurve,
         )
     }
 
@@ -288,7 +326,94 @@ class MusicService : MediaSessionService() {
             target = target,
             triggerPositionMs = (durationMs - requestedMixDurationMs).coerceAtLeast(0L),
             mixDurationMs = requestedMixDurationMs.coerceAtLeast(MIN_DJ_FADE_MS),
+            preloadPositionMs = (durationMs - requestedMixDurationMs - DJ_EXPERT_PRELOAD_LEAD_MS).coerceAtLeast(0L),
         )
+    }
+
+    private fun nextStartPositionMs(nextProfile: DjSilenceAnalyzer.AudioProfile?): Long {
+        nextProfile ?: return 0L
+        val audibleStartMs = nextProfile.audibleStartMs() ?: return 0L
+        val earlyPeak = nextProfile.averagePeak(
+            positionMs = audibleStartMs + DJ_EXPERT_ATTACK_SAMPLE_OFFSET_MS,
+            radiusMs = DJ_EXPERT_ATTACK_SAMPLE_RADIUS_MS,
+        )
+        val preRollMs = if (earlyPeak >= DJ_EXPERT_STRONG_ATTACK_PEAK) {
+            DJ_EXPERT_STRONG_ATTACK_PREROLL_MS
+        } else {
+            DJ_EXPERT_NEXT_PREROLL_MS
+        }
+        return (audibleStartMs - preRollMs).coerceAtLeast(0L)
+    }
+
+    private fun DjSilenceAnalyzer.AudioProfile.bestLowEnergyTrigger(startMs: Long, endMs: Long): Long? {
+        if (endMs <= startMs) return null
+        val threshold = audibleThreshold()
+        return windows
+            .asSequence()
+            .filter { window -> window.startMs in startMs..endMs }
+            .minByOrNull { window ->
+                val positionMs = window.startMs
+                val localRms = averageRms(positionMs, DJ_EXPERT_ENERGY_SCORE_RADIUS_MS)
+                val localPeak = averagePeak(positionMs, DJ_EXPERT_ENERGY_SCORE_RADIUS_MS)
+                val previousRms = averageRms(positionMs - DJ_EXPERT_ENERGY_SCORE_RADIUS_MS, DJ_EXPERT_ENERGY_SCORE_RADIUS_MS)
+                val nextRms = averageRms(positionMs + DJ_EXPERT_ENERGY_SCORE_RADIUS_MS, DJ_EXPERT_ENERGY_SCORE_RADIUS_MS)
+                val risingPenalty = (nextRms - previousRms).coerceAtLeast(0f)
+                val audiblePenalty = (localRms - threshold).coerceAtLeast(0f)
+                localRms + localPeak * 0.18f + risingPenalty * 0.35f + audiblePenalty * 0.25f
+            }
+            ?.startMs
+    }
+
+    private fun incomingStartVolumeScale(
+        currentProfile: DjSilenceAnalyzer.AudioProfile,
+        nextProfile: DjSilenceAnalyzer.AudioProfile,
+        triggerPositionMs: Long,
+        nextStartMs: Long,
+    ): Float {
+        val outgoingRms = currentProfile.averageRms(
+            positionMs = triggerPositionMs + DJ_EXPERT_LEVEL_SAMPLE_OFFSET_MS,
+            radiusMs = DJ_EXPERT_LEVEL_SAMPLE_RADIUS_MS,
+        )
+        val incomingRms = nextProfile.averageRms(
+            positionMs = nextStartMs + DJ_EXPERT_LEVEL_SAMPLE_OFFSET_MS,
+            radiusMs = DJ_EXPERT_LEVEL_SAMPLE_RADIUS_MS,
+        )
+        if (outgoingRms < DJ_EXPERT_MIN_LEVEL_RMS || incomingRms < DJ_EXPERT_MIN_LEVEL_RMS) return 1f
+
+        val ratio = (outgoingRms / incomingRms).coerceIn(0f, 1f)
+        val softenedScale = 1f - (1f - ratio) * DJ_EXPERT_LEVEL_MATCH_STRENGTH
+        return softenedScale.coerceIn(DJ_EXPERT_MIN_INCOMING_VOLUME_SCALE, 1f)
+    }
+
+    private fun expertTransitionCurve(
+        hasMeaningfulTailSilence: Boolean,
+        currentProfile: DjSilenceAnalyzer.AudioProfile,
+        nextProfile: DjSilenceAnalyzer.AudioProfile?,
+        triggerPositionMs: Long,
+        nextStartMs: Long,
+    ): DjTransitionCurve {
+        nextProfile ?: return DjTransitionCurve.ExpertNormal
+        val outgoingRms = currentProfile.averageRms(
+            positionMs = triggerPositionMs + DJ_EXPERT_LEVEL_SAMPLE_OFFSET_MS,
+            radiusMs = DJ_EXPERT_LEVEL_SAMPLE_RADIUS_MS,
+        )
+        val incomingRms = nextProfile.averageRms(
+            positionMs = nextStartMs + DJ_EXPERT_LEVEL_SAMPLE_OFFSET_MS,
+            radiusMs = DJ_EXPERT_LEVEL_SAMPLE_RADIUS_MS,
+        )
+        val incomingPeak = nextProfile.averagePeak(
+            positionMs = nextStartMs + DJ_EXPERT_ATTACK_SAMPLE_OFFSET_MS,
+            radiusMs = DJ_EXPERT_ATTACK_SAMPLE_RADIUS_MS,
+        )
+        val strongIncoming = incomingPeak >= DJ_EXPERT_STRONG_ATTACK_PEAK ||
+            (outgoingRms >= DJ_EXPERT_MIN_LEVEL_RMS && incomingRms > outgoingRms * DJ_EXPERT_STRONG_INCOMING_RMS_RATIO)
+
+        return when {
+            hasMeaningfulTailSilence && strongIncoming -> DjTransitionCurve.ExpertSilenceStrongIncoming
+            hasMeaningfulTailSilence -> DjTransitionCurve.ExpertSilence
+            strongIncoming -> DjTransitionCurve.ExpertStrongIncoming
+            else -> DjTransitionCurve.ExpertNormal
+        }
     }
 
     private fun isSameExpertTransitionContext(player: ExoPlayer, currentMediaId: String): Boolean {
@@ -306,9 +431,12 @@ class MusicService : MediaSessionService() {
         currentMediaId: String,
         target: ServiceDjTarget,
         mixDurationMs: Long,
+        incomingStartVolumeScale: Float = 1f,
+        transitionCurve: DjTransitionCurve = DjTransitionCurve.Classic,
     ) {
         if (activePlayer !== outgoingPlayer || standbyPlayer !== incomingPlayer) return
         val originalVolume = outgoingPlayer.volume.coerceIn(0f, 1f).takeIf { it > 0f } ?: 1f
+        val safeIncomingStartVolumeScale = incomingStartVolumeScale.coerceIn(DJ_EXPERT_MIN_INCOMING_VOLUME_SCALE, 1f)
         val prepared = prepareStandbyPlayer(currentMediaId, target)
         if (!prepared) return
 
@@ -337,8 +465,14 @@ class MusicService : MediaSessionService() {
                 return
             }
             val progress = (step + 1).toFloat() / stepCount.toFloat()
-            outgoingPlayer.volume = originalVolume * equalPowerOut(progress)
-            incomingPlayer.volume = originalVolume * equalPowerIn(progress)
+            val incomingProgress = transitionCurve.curvedIncomingProgress(progress)
+            val outgoingProgress = transitionCurve.curvedOutgoingProgress(progress)
+            val transitionHeadroom = transitionCurve.headroomAt(progress)
+            val incomingScaleProgress = incomingProgress * incomingProgress
+            val incomingVolumeScale = safeIncomingStartVolumeScale +
+                (1f - safeIncomingStartVolumeScale) * incomingScaleProgress
+            outgoingPlayer.volume = originalVolume * equalPowerOut(outgoingProgress) * transitionHeadroom
+            incomingPlayer.volume = originalVolume * equalPowerIn(incomingProgress) * incomingVolumeScale * transitionHeadroom
         }
 
         incomingPlayer.volume = originalVolume
@@ -564,7 +698,37 @@ class MusicService : MediaSessionService() {
         val target: ServiceDjTarget,
         val triggerPositionMs: Long,
         val mixDurationMs: Long,
+        val preloadPositionMs: Long,
+        val incomingStartVolumeScale: Float = 1f,
+        val transitionCurve: DjTransitionCurve = DjTransitionCurve.Classic,
     )
+
+    private data class DjTransitionCurve(
+        val incomingPower: Double,
+        val outgoingPower: Double,
+        val mixHeadroom: Float,
+    ) {
+        fun curvedIncomingProgress(progress: Float): Float = progress.curvedBy(incomingPower)
+
+        fun curvedOutgoingProgress(progress: Float): Float = progress.curvedBy(outgoingPower)
+
+        fun headroomAt(progress: Float): Float {
+            val centerWeight = sin(progress.coerceIn(0f, 1f).toDouble() * PI).toFloat()
+            return 1f - (1f - mixHeadroom.coerceIn(0f, 1f)) * centerWeight
+        }
+
+        private fun Float.curvedBy(power: Double): Float {
+            return coerceIn(0f, 1f).toDouble().pow(power).toFloat().coerceIn(0f, 1f)
+        }
+
+        companion object {
+            val Classic = DjTransitionCurve(incomingPower = 1.0, outgoingPower = 1.0, mixHeadroom = 1f)
+            val ExpertSilence = DjTransitionCurve(incomingPower = 0.90, outgoingPower = 1.05, mixHeadroom = 0.96f)
+            val ExpertSilenceStrongIncoming = DjTransitionCurve(incomingPower = 1.18, outgoingPower = 1.05, mixHeadroom = 0.95f)
+            val ExpertNormal = DjTransitionCurve(incomingPower = 1.15, outgoingPower = 0.95, mixHeadroom = 0.93f)
+            val ExpertStrongIncoming = DjTransitionCurve(incomingPower = 1.35, outgoingPower = 0.90, mixHeadroom = 0.91f)
+        }
+    }
 
     private data class DjServiceConfig(
         val enabled: Boolean,
@@ -603,8 +767,22 @@ class MusicService : MediaSessionService() {
         private const val DJ_HANDOFF_SAFETY_MS = 700L
         private const val DJ_EXPERT_ANALYSIS_LEAD_MS = 30_000L
         private const val DJ_EXPERT_MIN_TRAILING_SILENCE_MS = 1_500L
-        private const val DJ_EXPERT_HANDOFF_LEAD_MS = 150L
-        private const val DJ_EXPERT_SILENCE_HANDOFF_FADE_MS = 2_500L
+        private const val DJ_EXPERT_SILENCE_HANDOFF_FADE_MS = 3_500L
+        private const val DJ_EXPERT_PRELOAD_LEAD_MS = 7_000L
+        private const val DJ_EXPERT_NEXT_PREROLL_MS = 220L
+        private const val DJ_EXPERT_STRONG_ATTACK_PREROLL_MS = 520L
+        private const val DJ_EXPERT_MIN_NORMAL_BLEND_MS = 3_000L
+        private const val DJ_EXPERT_TRIGGER_SEARCH_MS = 4_000L
+        private const val DJ_EXPERT_ENERGY_SCORE_RADIUS_MS = 480L
+        private const val DJ_EXPERT_LEVEL_SAMPLE_OFFSET_MS = 650L
+        private const val DJ_EXPERT_LEVEL_SAMPLE_RADIUS_MS = 900L
+        private const val DJ_EXPERT_ATTACK_SAMPLE_OFFSET_MS = 360L
+        private const val DJ_EXPERT_ATTACK_SAMPLE_RADIUS_MS = 520L
+        private const val DJ_EXPERT_MIN_LEVEL_RMS = 0.004f
+        private const val DJ_EXPERT_LEVEL_MATCH_STRENGTH = 0.65f
+        private const val DJ_EXPERT_MIN_INCOMING_VOLUME_SCALE = 0.70f
+        private const val DJ_EXPERT_STRONG_ATTACK_PEAK = 0.24f
+        private const val DJ_EXPERT_STRONG_INCOMING_RMS_RATIO = 1.35f
         private const val DJ_EXPERT_TRIGGER_TOLERANCE_MS = 120L
         private const val DJ_EXPERT_WAIT_MAX_MS = 500L
         private const val DJ_FADE_STEPS = 24

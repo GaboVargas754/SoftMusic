@@ -13,8 +13,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -96,6 +97,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -110,6 +112,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -303,6 +306,16 @@ fun SoftMusicApp(
         showTransientAlert("Se agregó a Playlist")
     }
 
+    fun playNextWithAlert(song: Song) {
+        onPlayNext(song)
+        showTransientAlert("Se reproducirá después")
+    }
+
+    fun playAtEndWithAlert(song: Song) {
+        onPlayAtEnd(song)
+        showTransientAlert("Se agregó al final de la cola")
+    }
+
     fun removeSongFromPlaylistWithUndo(playlistId: String, songId: Long) {
         onRemoveSongFromPlaylist(playlistId, songId)
         showTransientAlert(
@@ -379,8 +392,8 @@ fun SoftMusicApp(
                     onPlayQueuedSong = onPlayQueuedSong,
                     onPlayQueue = onPlayQueue,
                     onToggleFavorite = ::toggleFavoriteWithAlert,
-                    onPlayNext = onPlayNext,
-                    onPlayAtEnd = onPlayAtEnd,
+                    onPlayNext = ::playNextWithAlert,
+                    onPlayAtEnd = ::playAtEndWithAlert,
                     onAddSongToPlaylist = ::addSongToPlaylistWithAlert,
                     onPlaybackModeChange = onPlaybackModeChange,
                     onSortModeChange = onSortModeChange,
@@ -395,8 +408,8 @@ fun SoftMusicApp(
                     onPlayQueuedSong = onPlayQueuedSong,
                     onPlayQueue = onPlayQueue,
                     onToggleFavorite = ::toggleFavoriteWithAlert,
-                    onPlayNext = onPlayNext,
-                    onPlayAtEnd = onPlayAtEnd,
+                    onPlayNext = ::playNextWithAlert,
+                    onPlayAtEnd = ::playAtEndWithAlert,
                     onAddSongToPlaylist = ::addSongToPlaylistWithAlert,
                 )
                 LibraryDestination.Favorites -> FavoritesLibraryScreen(
@@ -412,8 +425,8 @@ fun SoftMusicApp(
                     },
                     onPlayList = { onPlayQueue(favoriteSongs, PlaybackQueueSource.Favorites, null) },
                     onToggleFavorite = ::toggleFavoriteWithAlert,
-                    onPlayNext = onPlayNext,
-                    onPlayAtEnd = onPlayAtEnd,
+                    onPlayNext = ::playNextWithAlert,
+                    onPlayAtEnd = ::playAtEndWithAlert,
                     onAddSongToPlaylist = ::addSongToPlaylistWithAlert,
                     onPlaybackModeChange = onPlaybackModeChange,
                     onOpenMusic = { destination = LibraryDestination.Music },
@@ -431,8 +444,8 @@ fun SoftMusicApp(
                     onPlayQueuedSong = onPlayQueuedSong,
                     onPlayQueue = onPlayQueue,
                     onToggleFavorite = ::toggleFavoriteWithAlert,
-                    onPlayNext = onPlayNext,
-                    onPlayAtEnd = onPlayAtEnd,
+                    onPlayNext = ::playNextWithAlert,
+                    onPlayAtEnd = ::playAtEndWithAlert,
                     onAddSongToPlaylist = ::addSongToPlaylistWithAlert,
                     onPlaybackModeChange = onPlaybackModeChange,
                     onOpenMusic = { destination = LibraryDestination.Music },
@@ -1229,11 +1242,14 @@ private fun SearchLibraryScreen(
                                 isFavorite = song.id in uiState.favoriteSongIds,
                                 playlists = uiState.playlists,
                                 onClick = {
+                                    val folderSongs = librarySongs
+                                        .filter { it.folderPath == song.folderPath }
+                                        .ifEmpty { listOf(song) }
                                     onPlayQueuedSong(
                                         song,
-                                        searchedSongs,
+                                        folderSongs,
                                         PlaybackQueueSource.Songs,
-                                        "search",
+                                        song.folderPath,
                                     )
                                 },
                                 onToggleFavorite = { onToggleFavorite(song.id) },
@@ -4751,28 +4767,29 @@ private fun ThinTimeline(
     thumbColor: Color,
     modifier: Modifier = Modifier,
 ) {
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
+
     fun updateValue(x: Float, width: Int) {
         val safeWidth = width.coerceAtLeast(1)
-        onValueChange((x / safeWidth.toFloat()).coerceIn(0f, 1f))
+        currentOnValueChange((x / safeWidth.toFloat()).coerceIn(0f, 1f))
     }
 
     Canvas(
         modifier = modifier
             .fillMaxWidth()
-            .height(28.dp)
+            .height(36.dp)
             .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    updateValue(offset.x, size.width)
-                    onValueChangeFinished()
-                }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { offset -> updateValue(offset.x, size.width) },
-                    onDragEnd = onValueChangeFinished,
-                    onDragCancel = onValueChangeFinished,
-                ) { change, _ ->
-                    updateValue(change.position.x, size.width)
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    down.consume()
+                    updateValue(down.position.x, size.width)
+
+                    drag(down.id) { change ->
+                        change.consume()
+                        updateValue(change.position.x, size.width)
+                    }
+                    currentOnValueChangeFinished()
                 }
             },
     ) {
@@ -4810,39 +4827,92 @@ private fun PlaybackQueueDialog(
     currentSong: Song,
     onDismiss: () -> Unit,
 ) {
+    val currentIndex = queue.indexOfFirst { it.id == currentSong.id }
+    val upcomingSongs = if (currentIndex >= 0) queue.drop(currentIndex + 1) else queue
+    val totalDurationMs = remember(queue) { queue.sumOf { it.durationMs.coerceAtLeast(0L) } }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Cola de reproducción") },
-        text = {
-            if (queue.isEmpty()) {
-                Text(
-                    text = "No hay canciones en cola.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        title = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = queue.size.songCountLabel(),
+                        text = "Cola de reproducción",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Black,
+                    )
+                    Text(
+                        text = "${queue.size.songCountLabel()} • ${formatDuration(totalDurationMs)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        text = {
+            if (queue.isEmpty()) {
+                EmptyPlaybackQueue()
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    PlaybackQueueSectionLabel("Reproduciendo ahora")
+                    PlaybackQueueItem(
+                        indexLabel = "Ahora",
+                        song = currentSong,
+                        isCurrent = true,
+                    )
+
+                    PlaybackQueueSectionLabel(
+                        if (upcomingSongs.isEmpty()) "Siguiente" else "Siguiente • ${upcomingSongs.size.songCountLabel()}"
                     )
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(360.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                            .height(340.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        itemsIndexed(
-                            items = queue,
-                            key = { _, song -> song.id },
-                            contentType = { _, _ -> "queueSong" },
-                        ) { index, song ->
-                            Box(modifier = Modifier.animateItem()) {
-                                PlaybackQueueItem(
-                                    index = index + 1,
-                                    song = song,
-                                    isCurrent = song.id == currentSong.id,
+                        if (upcomingSongs.isEmpty()) {
+                            item {
+                                Text(
+                                    text = "No hay más canciones después de esta.",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                        .padding(horizontal = 14.dp, vertical = 16.dp),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
                                 )
+                            }
+                        } else {
+                            itemsIndexed(
+                                items = upcomingSongs,
+                                key = { _, song -> song.id },
+                                contentType = { _, _ -> "queueSong" },
+                            ) { index, song ->
+                                Box(modifier = Modifier.animateItem()) {
+                                    PlaybackQueueItem(
+                                        indexLabel = if (index == 0) "Sig." else "#${index + 2}",
+                                        song = song,
+                                        isCurrent = false,
+                                    )
+                                }
                             }
                         }
                     }
@@ -4858,8 +4928,51 @@ private fun PlaybackQueueDialog(
 }
 
 @Composable
+private fun EmptyPlaybackQueue() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .padding(horizontal = 18.dp, vertical = 22.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(32.dp),
+        )
+        Text(
+            text = "No hay canciones en cola.",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = "Reproduce una lista o agrega canciones para verlas aquí.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun PlaybackQueueSectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Black,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+@Composable
 private fun PlaybackQueueItem(
-    index: Int,
+    indexLabel: String,
     song: Song,
     isCurrent: Boolean,
 ) {
@@ -4875,29 +4988,35 @@ private fun PlaybackQueueItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(backgroundColor)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = index.toString(),
-            modifier = Modifier.width(28.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
+        Artwork(
+            song = song,
+            modifier = Modifier.size(48.dp),
+            rounded = 8.dp,
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
+                text = indexLabel,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Black,
+                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Text(
                 text = song.title,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = song.artist,
+                text = "${song.artist} • ${song.album}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
