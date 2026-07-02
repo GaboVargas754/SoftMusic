@@ -1,8 +1,11 @@
 package com.softmusic.app.player
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -16,6 +19,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.softmusic.app.MainActivity
+import com.softmusic.app.R
 import com.google.common.collect.ImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +59,7 @@ class MusicService : MediaSessionService() {
     @UnstableApi
     override fun onCreate() {
         super.onCreate()
+        createMediaNotificationChannel()
         setMediaNotificationProvider(CompactMediaNotificationProvider(this))
         primaryPlayer = createPlayer(handlesAudioFocus = true)
         secondaryPlayer = createPlayer(handlesAudioFocus = false)
@@ -76,6 +81,22 @@ class MusicService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
+
+    private fun createMediaNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val notificationManager = getSystemService(NotificationManager::class.java)
+        if (notificationManager.getNotificationChannel(MEDIA_NOTIFICATION_CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            MEDIA_NOTIFICATION_CHANNEL_ID,
+            getString(R.string.notification_channel_media_playback),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = getString(R.string.notification_channel_media_playback)
+            setShowBadge(false)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+        }
+        notificationManager.createNotificationChannel(channel)
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         shutdownPlayers()
@@ -596,7 +617,12 @@ class MusicService : MediaSessionService() {
     }
 
     @UnstableApi
-    private class CompactMediaNotificationProvider(context: Context) : DefaultMediaNotificationProvider(context) {
+    private class CompactMediaNotificationProvider(context: Context) : DefaultMediaNotificationProvider(
+        context,
+        { MEDIA_NOTIFICATION_ID },
+        MEDIA_NOTIFICATION_CHANNEL_ID,
+        R.string.notification_channel_media_playback,
+    ) {
         override fun getMediaButtons(
             session: MediaSession,
             playerCommands: Player.Commands,
@@ -788,5 +814,7 @@ class MusicService : MediaSessionService() {
         private const val DJ_FADE_STEPS = 24
         private const val DJ_INCOMING_READY_TIMEOUT_MS = 1_500L
         private const val DJ_READY_POLL_MS = 50L
+        private const val MEDIA_NOTIFICATION_ID = 2101
+        private const val MEDIA_NOTIFICATION_CHANNEL_ID = "softmusic_media_playback"
     }
 }

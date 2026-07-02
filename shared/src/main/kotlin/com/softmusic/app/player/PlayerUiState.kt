@@ -29,4 +29,8 @@ data class PlayerUiState(
     val djMixMode: DjMixMode = DjMixMode.Classic,
     val djMixDurationSeconds: Int = 8,
     val hasController: Boolean = false,
+    val restoredSessionAvailable: Boolean = false,
+    val restoredSessionPositionMs: Long = 0,
+    val sleepTimerRemainingMs: Long = 0,
+    val sleepTimerFinishedEventId: Long = 0,
 )

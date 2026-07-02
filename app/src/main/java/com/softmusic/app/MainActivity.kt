@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -258,6 +259,7 @@ class MainActivity : ComponentActivity() {
     private fun shouldShowAudioPermissionRationale(): Boolean = shouldShowRequestPermissionRationale(audioPermissionName())
 
     private fun hasNotificationPermission(): Boolean {
+        if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return false
         val permission = notificationPermissionName() ?: return true
         return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
@@ -378,6 +380,8 @@ private fun SoftMusicRoot(
     var showAudioPermissionRationale by remember { mutableStateOf(shouldShowAudioPermissionRationale()) }
     var notificationPermissionGranted by remember { mutableStateOf(checkNotificationPermission()) }
     var defaultsApplied by remember { mutableStateOf(false) }
+    var showNotificationPermissionPrompt by remember { mutableStateOf(false) }
+    var notificationPermissionPromptDismissed by remember { mutableStateOf(false) }
 
     fun refreshPermissionState() {
         permissionGranted = checkAudioPermission()
@@ -394,6 +398,15 @@ private fun SoftMusicRoot(
         ActivityResultContracts.RequestPermission(),
     ) {
         refreshPermissionState()
+    }
+
+    fun requestNotificationPermission() {
+        val notificationPermission = notificationPermissionName()
+        if (notificationPermission == null) {
+            onOpenNotificationSettings()
+        } else {
+            notificationPermissionLauncher.launch(notificationPermission)
+        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -426,6 +439,12 @@ private fun SoftMusicRoot(
         }
     }
 
+    LaunchedEffect(uiState.currentSong?.id, notificationPermissionGranted) {
+        if (uiState.currentSong != null && !notificationPermissionGranted && !notificationPermissionPromptDismissed) {
+            showNotificationPermissionPrompt = true
+        }
+    }
+
     LaunchedEffect(defaultsApplied, uiState.hiddenFolderPaths, hiddenFolderPaths) {
         if (defaultsApplied && uiState.allFolders.isNotEmpty() && uiState.hiddenFolderPaths != hiddenFolderPaths) {
             onHiddenFolderPathsChange(uiState.hiddenFolderPaths)
@@ -444,19 +463,21 @@ private fun SoftMusicRoot(
                 onAudioPermissionRequested()
                 permissionLauncher.launch(audioPermissionName())
             },
-            onRequestNotificationPermission = {
-                val notificationPermission = notificationPermissionName()
-                if (notificationPermission == null) {
-                    notificationPermissionGranted = true
-                } else {
-                    notificationPermissionLauncher.launch(notificationPermission)
-                }
-            },
+            onRequestNotificationPermission = ::requestNotificationPermission,
             onRefreshLibrary = viewModel::loadSongs,
             onPlaySong = viewModel::playSong,
             onPlayList = viewModel::playVisibleList,
             onPlayQueuedSong = viewModel::playQueuedSong,
             onPlayQueue = viewModel::playQueue,
+            onPlayQueueSong = viewModel::playQueueSong,
+            onRemoveFromQueue = viewModel::removeQueuedSong,
+            onMoveQueuedSong = viewModel::moveQueuedSong,
+            onClearUpcomingQueue = viewModel::clearUpcomingQueue,
+            onCreatePlaylistFromQueue = viewModel::createPlaylistFromQueue,
+            onResumeRestoredSession = viewModel::resumeRestoredSession,
+            onDismissRestoredSession = viewModel::dismissRestoredSession,
+            onStartSleepTimer = viewModel::startSleepTimer,
+            onCancelSleepTimer = viewModel::cancelSleepTimer,
             onToggleFavorite = viewModel::toggleFavorite,
             onPlayNext = viewModel::playNext,
             onPlayAtEnd = viewModel::playAtEnd,
@@ -525,6 +546,39 @@ private fun SoftMusicRoot(
                 onCloseApp()
             },
         )
+
+        if (showNotificationPermissionPrompt) {
+            AlertDialog(
+                onDismissRequest = {
+                    notificationPermissionPromptDismissed = true
+                    showNotificationPermissionPrompt = false
+                },
+                title = { Text("Activa los controles del sistema") },
+                text = {
+                    Text("Permite las notificaciones de SoftMusic para mostrar controles de reproducción en el panel, pantalla de bloqueo y accesorios compatibles.")
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showNotificationPermissionPrompt = false
+                            requestNotificationPermission()
+                        },
+                    ) {
+                        Text("Activar")
+                    }
+                },
+                dismissButton = {
+                    OutlinedButton(
+                        onClick = {
+                            notificationPermissionPromptDismissed = true
+                            showNotificationPermissionPrompt = false
+                        },
+                    ) {
+                        Text("Luego")
+                    }
+                },
+            )
+        }
     }
 }
 

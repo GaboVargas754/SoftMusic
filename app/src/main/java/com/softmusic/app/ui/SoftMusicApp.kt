@@ -2,6 +2,7 @@
 
 package com.softmusic.app.ui
 
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
@@ -64,6 +66,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -97,6 +100,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -143,6 +147,7 @@ import com.softmusic.app.ui.theme.AppColorPalette
 import com.softmusic.app.ui.theme.AppThemeMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.text.Normalizer
 import java.util.Date
@@ -200,6 +205,15 @@ fun SoftMusicApp(
     onPlayList: () -> Unit,
     onPlayQueuedSong: (Song, List<Song>, PlaybackQueueSource, String?) -> Unit,
     onPlayQueue: (List<Song>, PlaybackQueueSource, String?) -> Unit,
+    onPlayQueueSong: (Song) -> Unit,
+    onRemoveFromQueue: (Song) -> Unit,
+    onMoveQueuedSong: (Song, Int) -> Unit,
+    onClearUpcomingQueue: () -> Unit,
+    onCreatePlaylistFromQueue: (String) -> Unit,
+    onResumeRestoredSession: () -> Unit,
+    onDismissRestoredSession: () -> Unit,
+    onStartSleepTimer: (Long) -> Unit,
+    onCancelSleepTimer: () -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onPlayNext: (Song) -> Unit,
     onPlayAtEnd: (Song) -> Unit,
@@ -301,6 +315,33 @@ fun SoftMusicApp(
         }
     }
 
+    fun createQueuePlaylistWithAlert(name: String): Boolean {
+        val cleanName = name.trim()
+        return when {
+            uiState.playbackQueue.isEmpty() -> {
+                showTransientAlert("No hay cola para guardar")
+                false
+            }
+            cleanName.isBlank() -> {
+                showTransientAlert("Escribe un nombre para la playlist")
+                false
+            }
+            cleanName.length > MAX_PLAYLIST_NAME_LENGTH -> {
+                showTransientAlert("El nombre es demasiado largo")
+                false
+            }
+            uiState.playlists.any { it.name.normalizedSearchText() == cleanName.normalizedSearchText() } -> {
+                showTransientAlert("Ya existe una playlist con ese nombre")
+                false
+            }
+            else -> {
+                onCreatePlaylistFromQueue(cleanName)
+                showTransientAlert("Cola guardada como playlist")
+                true
+            }
+        }
+    }
+
     fun addSongToPlaylistWithAlert(playlistId: String, songId: Long) {
         onAddSongToPlaylist(playlistId, songId)
         showTransientAlert("Se agregó a Playlist")
@@ -330,6 +371,12 @@ fun SoftMusicApp(
         delay(2_000L)
         if (transientAlert?.id == alertId) {
             transientAlert = null
+        }
+    }
+
+    LaunchedEffect(uiState.sleepTimerFinishedEventId) {
+        if (uiState.sleepTimerFinishedEventId > 0L) {
+            showTransientAlert("Temporizador finalizado")
         }
     }
 
@@ -499,6 +546,22 @@ fun SoftMusicApp(
             }
         }
 
+        val restoredSong = uiState.currentSong
+        if (uiState.restoredSessionAvailable && !uiState.isPlaying && restoredSong != null && !showPlayer) {
+            ContinuePlaybackBanner(
+                song = restoredSong,
+                positionMs = uiState.restoredSessionPositionMs,
+                onContinue = {
+                    onResumeRestoredSession()
+                    showPlayer = true
+                },
+                onDismiss = onDismissRestoredSession,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 16.dp, vertical = 18.dp),
+            )
+        }
+
         if (showPlayer && uiState.currentSong != null) {
             Surface(
                 modifier = Modifier
@@ -512,6 +575,16 @@ fun SoftMusicApp(
                     playbackProgressState = playbackProgressState,
                     isFavorite = uiState.currentSong?.id in uiState.favoriteSongIds,
                     playlists = uiState.playlists,
+                    onPlayQueueSong = onPlayQueueSong,
+                    onRemoveFromQueue = onRemoveFromQueue,
+                    onMoveQueuedSong = onMoveQueuedSong,
+                    onClearUpcomingQueue = {
+                        onClearUpcomingQueue()
+                        showTransientAlert("Se limpió la cola siguiente")
+                    },
+                    onCreatePlaylistFromQueue = ::createQueuePlaylistWithAlert,
+                    onStartSleepTimer = onStartSleepTimer,
+                    onCancelSleepTimer = onCancelSleepTimer,
                     onTogglePlayPause = onTogglePlayPause,
                     onNext = onNext,
                     onPrevious = onPrevious,
@@ -645,6 +718,76 @@ private fun TemporaryAlert(
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Black,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContinuePlaybackBanner(
+    song: Song,
+    positionMs: Long,
+    onContinue: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+        shape = RoundedCornerShape(24.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Artwork(
+                song = song,
+                modifier = Modifier.size(58.dp),
+                rounded = 14.dp,
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = "Continuar reproducción",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                )
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "${song.artist} • desde ${formatDuration(positionMs)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Button(onClick = onContinue) {
+                    Text("Continuar")
+                }
+                OutlinedButton(onClick = onDismiss) {
+                    Text("Descartar")
+                }
             }
         }
     }
@@ -792,7 +935,7 @@ private fun LibraryHomeScreen(
             LibraryOptionCard(
                 title = "Mi Música",
                 subtitle = "$songCount canciones locales",
-                icon = Icons.Filled.LibraryMusic,
+                icon = Icons.Filled.Folder,
                 enabled = true,
                 onClick = onOpenMusic,
             )
@@ -4221,85 +4364,157 @@ private fun SongActionsDropdown(
 @Composable
 private fun AddToPlaylistButton(
     playlists: List<MusicPlaylist>,
+    songs: List<Song>,
     song: Song,
     onAddToPlaylist: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var showPlaylists by remember { mutableStateOf(false) }
-    val availablePlaylists = remember(expanded, playlists, song.id) {
-        if (expanded) playlists.filterNot { playlist -> song.id in playlist.songIds } else emptyList()
-    }
-
-    LaunchedEffect(expanded) {
-        if (!expanded) showPlaylists = false
+    val songsById = remember(songs) { songs.associateBy { it.id } }
+    val availablePlaylists = remember(playlists, song.id) {
+        playlists.filterNot { playlist -> song.id in playlist.songIds }
     }
 
     Box {
-        OutlinedIconButton(onClick = { expanded = true }) {
+        IconButton(onClick = { expanded = true }) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
                 contentDescription = "Agregar a playlist",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(25.dp),
             )
         }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            if (showPlaylists) {
-                DropdownMenuItem(
-                    text = { Text("Volver") },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
-                        )
-                    },
-                    onClick = { showPlaylists = false },
+            Column(
+                modifier = Modifier
+                    .width(300.dp)
+                    .padding(horizontal = 6.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = "Agregar a playlist",
+                    modifier = Modifier.padding(horizontal = 10.dp),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
-                availablePlaylists.forEach { playlist ->
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = playlist.name,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
-                                contentDescription = null,
-                            )
-                        },
-                        onClick = {
-                            expanded = false
-                            onAddToPlaylist(playlist.id)
-                        },
-                    )
-                }
-            } else {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = when {
-                                playlists.isEmpty() -> "Crea una playlist primero"
-                                availablePlaylists.isEmpty() -> "Ya está en tus playlists"
-                                else -> "Agregar a Playlist"
+                Text(
+                    text = "Selecciona dónde guardar esta canción",
+                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                when {
+                    playlists.isEmpty() -> AddToPlaylistEmptyState("Crea una playlist primero")
+                    availablePlaylists.isEmpty() -> AddToPlaylistEmptyState("Ya está en todas tus playlists")
+                    else -> availablePlaylists.forEach { playlist ->
+                        PlaylistPickerRow(
+                            playlist = playlist,
+                            songsById = songsById,
+                            onClick = {
+                                expanded = false
+                                onAddToPlaylist(playlist.id)
                             },
                         )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
-                            contentDescription = null,
-                        )
-                    },
-                    enabled = availablePlaylists.isNotEmpty(),
-                    onClick = { showPlaylists = true },
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddToPlaylistEmptyState(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .padding(horizontal = 12.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun PlaylistPickerRow(
+    playlist: MusicPlaylist,
+    songsById: Map<Long, Song>,
+    onClick: () -> Unit,
+) {
+    val playlistSongs = remember(playlist.songIds, songsById) {
+        playlist.songIds.mapNotNull { songsById[it] }
+    }
+    val coverSong = remember(playlistSongs) { playlistSongs.firstOrNull { it.artworkUri != null } ?: playlistSongs.firstOrNull() }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (coverSong != null) {
+            Artwork(
+                song = coverSong,
+                modifier = Modifier.size(44.dp),
+                rounded = 10.dp,
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
         }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = playlist.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = playlistSongs.size.songCountLabel(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.PlaylistAdd,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -4397,12 +4612,20 @@ private fun MiniPlayer(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FullPlayer(
     uiState: PlayerUiState,
     playbackProgressState: StateFlow<PlaybackProgressState>,
     isFavorite: Boolean,
     playlists: List<MusicPlaylist>,
+    onPlayQueueSong: (Song) -> Unit,
+    onRemoveFromQueue: (Song) -> Unit,
+    onMoveQueuedSong: (Song, Int) -> Unit,
+    onClearUpcomingQueue: () -> Unit,
+    onCreatePlaylistFromQueue: (String) -> Boolean,
+    onStartSleepTimer: (Long) -> Unit,
+    onCancelSleepTimer: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -4420,6 +4643,8 @@ private fun FullPlayer(
     var showVinylArtwork by remember(uiState.currentSong?.id) { mutableStateOf(false) }
     var showSongDetails by rememberSaveable(uiState.currentSong?.id) { mutableStateOf(false) }
     var showPlaybackQueue by rememberSaveable(uiState.currentSong?.id) { mutableStateOf(false) }
+    var showSleepTimerDialog by rememberSaveable { mutableStateOf(false) }
+    val queueSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val duration = max(playbackProgress.durationMs, 1L)
     val progress = (playbackProgress.positionMs.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
     val playerAccent = MaterialTheme.colorScheme.primary
@@ -4466,10 +4691,39 @@ private fun FullPlayer(
     }
 
     if (showPlaybackQueue) {
-        PlaybackQueueDialog(
+        ModalBottomSheet(
+            onDismissRequest = { showPlaybackQueue = false },
+            sheetState = queueSheetState,
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            PlaybackQueueSheet(
             queue = uiState.playbackQueue,
             currentSong = song,
-            onDismiss = { showPlaybackQueue = false },
+                onPlaySong = { queuedSong ->
+                    onPlayQueueSong(queuedSong)
+                    showPlaybackQueue = false
+                },
+                onRemoveSong = onRemoveFromQueue,
+                onMoveSong = onMoveQueuedSong,
+                onClearUpcomingQueue = onClearUpcomingQueue,
+                onCreatePlaylistFromQueue = onCreatePlaylistFromQueue,
+                onDismiss = { showPlaybackQueue = false },
+            )
+        }
+    }
+
+    if (showSleepTimerDialog) {
+        SleepTimerDialog(
+            remainingMs = uiState.sleepTimerRemainingMs,
+            onStartTimer = { durationMs ->
+                onStartSleepTimer(durationMs)
+                showSleepTimerDialog = false
+            },
+            onCancelTimer = {
+                onCancelSleepTimer()
+                showSleepTimerDialog = false
+            },
+            onDismiss = { showSleepTimerDialog = false },
         )
     }
 
@@ -4702,18 +4956,48 @@ private fun FullPlayer(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "SoftMusic",
-                    color = playerAccent,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Text(
+                        text = "SoftMusic",
+                        color = playerAccent,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    if (uiState.djModeEnabled) {
+                        DjStatusChip(
+                            mixMode = uiState.djMixMode,
+                            mixDurationSeconds = uiState.djMixDurationSeconds,
+                            positionMs = playbackProgress.positionMs,
+                            durationMs = playbackProgress.durationMs,
+                            isPlaying = uiState.isPlaying,
+                        )
+                    }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (uiState.sleepTimerRemainingMs > 0L) {
+                        Text(
+                            text = formatDuration(uiState.sleepTimerRemainingMs),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = playerAccent,
+                            fontWeight = FontWeight.Black,
+                        )
+                    }
+                    IconButton(onClick = { showSleepTimerDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.Timer,
+                            contentDescription = "Temporizador de apagado",
+                            tint = if (uiState.sleepTimerRemainingMs > 0L) playerAccent else primaryText,
+                        )
+                    }
                     AddToPlaylistButton(
                         playlists = playlists,
+                        songs = uiState.songs,
                         song = song,
                         onAddToPlaylist = onAddToPlaylist,
                     )
@@ -4822,97 +5106,104 @@ private fun ThinTimeline(
 }
 
 @Composable
-private fun PlaybackQueueDialog(
-    queue: List<Song>,
-    currentSong: Song,
+private fun DjStatusChip(
+    mixMode: DjMixMode,
+    mixDurationSeconds: Int,
+    positionMs: Long,
+    durationMs: Long,
+    isPlaying: Boolean,
+) {
+    val safeDurationMs = durationMs.coerceAtLeast(0L)
+    val remainingMs = if (safeDurationMs > 0L) {
+        (safeDurationMs - positionMs).coerceAtLeast(0L)
+    } else {
+        Long.MAX_VALUE
+    }
+    val mixDurationMs = mixDurationSeconds.coerceAtLeast(1) * 1_000L
+    val preparationWindowMs = mixDurationMs + 12_000L
+    val isNearTransition = safeDurationMs > 0L && remainingMs <= preparationWindowMs
+    val isInMixWindow = safeDurationMs > 0L && remainingMs <= mixDurationMs
+    val modeLabel = when (mixMode) {
+        DjMixMode.Classic -> "Clásico"
+        DjMixMode.Expert -> "Experto"
+    }
+    val statusLabel = when {
+        !isPlaying -> "DJ pausa"
+        isInMixWindow -> "DJ mezcla"
+        isNearTransition -> "DJ prepara"
+        else -> "DJ $modeLabel"
+    }
+    val accent = if (mixMode == DjMixMode.Expert) {
+        MaterialTheme.colorScheme.tertiary
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
+
+    Surface(
+        color = accent.copy(alpha = 0.14f),
+        shape = RoundedCornerShape(24.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.DoubleArrow,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = "$statusLabel • ${mixDurationSeconds}s",
+                style = MaterialTheme.typography.labelSmall,
+                color = accent,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SleepTimerDialog(
+    remainingMs: Long,
+    onStartTimer: (Long) -> Unit,
+    onCancelTimer: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val currentIndex = queue.indexOfFirst { it.id == currentSong.id }
-    val upcomingSongs = if (currentIndex >= 0) queue.drop(currentIndex + 1) else queue
-    val totalDurationMs = remember(queue) { queue.sumOf { it.durationMs.coerceAtLeast(0L) } }
-
+    val options = listOf(
+        "15 min" to 15 * 60 * 1_000L,
+        "30 min" to 30 * 60 * 1_000L,
+        "45 min" to 45 * 60 * 1_000L,
+        "60 min" to 60 * 60 * 1_000L,
+    )
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.QueueMusic,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        text = "Cola de reproducción",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Black,
-                    )
-                    Text(
-                        text = "${queue.size.songCountLabel()} • ${formatDuration(totalDurationMs)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        },
+        title = { Text("Temporizador") },
         text = {
-            if (queue.isEmpty()) {
-                EmptyPlaybackQueue()
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    PlaybackQueueSectionLabel("Reproduciendo ahora")
-                    PlaybackQueueItem(
-                        indexLabel = "Ahora",
-                        song = currentSong,
-                        isCurrent = true,
-                    )
-
-                    PlaybackQueueSectionLabel(
-                        if (upcomingSongs.isEmpty()) "Siguiente" else "Siguiente • ${upcomingSongs.size.songCountLabel()}"
-                    )
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(340.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = if (remainingMs > 0L) {
+                        "Activo: se pausará en ${formatDuration(remainingMs)}."
+                    } else {
+                        "SoftMusic pausará la reproducción cuando termine el tiempo."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                options.chunked(2).forEach { rowOptions ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        if (upcomingSongs.isEmpty()) {
-                            item {
-                                Text(
-                                    text = "No hay más canciones después de esta.",
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(18.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-                                        .padding(horizontal = 14.dp, vertical = 16.dp),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                        } else {
-                            itemsIndexed(
-                                items = upcomingSongs,
-                                key = { _, song -> song.id },
-                                contentType = { _, _ -> "queueSong" },
-                            ) { index, song ->
-                                Box(modifier = Modifier.animateItem()) {
-                                    PlaybackQueueItem(
-                                        indexLabel = if (index == 0) "Sig." else "#${index + 2}",
-                                        song = song,
-                                        isCurrent = false,
-                                    )
-                                }
+                        rowOptions.forEach { (label, durationMs) ->
+                            Button(
+                                onClick = { onStartTimer(durationMs) },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(label)
                             }
                         }
                     }
@@ -4920,8 +5211,245 @@ private fun PlaybackQueueDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) {
+            if (remainingMs > 0L) {
+                OutlinedButton(onClick = onCancelTimer) {
+                    Text("Cancelar timer")
+                }
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
                 Text("Cerrar")
+            }
+        },
+    )
+}
+
+@Composable
+private fun PlaybackQueueSheet(
+    queue: List<Song>,
+    currentSong: Song,
+    onPlaySong: (Song) -> Unit,
+    onRemoveSong: (Song) -> Unit,
+    onMoveSong: (Song, Int) -> Unit,
+    onClearUpcomingQueue: () -> Unit,
+    onCreatePlaylistFromQueue: (String) -> Boolean,
+    onDismiss: () -> Unit,
+) {
+    val currentIndex = queue.indexOfFirst { it.id == currentSong.id }
+    val upcomingSongs = if (currentIndex >= 0) queue.drop(currentIndex + 1) else queue
+    val totalDurationMs = remember(queue) { queue.sumOf { it.durationMs.coerceAtLeast(0L) } }
+    var showSaveQueueDialog by rememberSaveable { mutableStateOf(false) }
+    var isClearingUpcoming by rememberSaveable { mutableStateOf(false) }
+    val queueActionScope = rememberCoroutineScope()
+
+    LaunchedEffect(upcomingSongs.size) {
+        if (upcomingSongs.isEmpty()) isClearingUpcoming = false
+    }
+
+    if (showSaveQueueDialog) {
+        SaveQueueAsPlaylistDialog(
+            onSave = { name ->
+                if (onCreatePlaylistFromQueue(name)) showSaveQueueDialog = false
+            },
+            onDismiss = { showSaveQueueDialog = false },
+        )
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "Cola de reproducción",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Black,
+                )
+                Text(
+                    text = "${queue.size.songCountLabel()} • ${formatDuration(totalDurationMs)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Cerrar cola",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        if (queue.isEmpty()) {
+            EmptyPlaybackQueue()
+        } else {
+            PlaybackQueueActions(
+                canClearUpcoming = upcomingSongs.isNotEmpty(),
+                canSaveQueue = queue.isNotEmpty(),
+                isClearingUpcoming = isClearingUpcoming,
+                onClearUpcoming = {
+                    isClearingUpcoming = true
+                    queueActionScope.launch {
+                        withFrameNanos { }
+                        onClearUpcomingQueue()
+                        isClearingUpcoming = false
+                    }
+                },
+                onSaveQueue = { showSaveQueueDialog = true },
+            )
+
+            PlaybackQueueSectionLabel("Reproduciendo ahora")
+            PlaybackQueueItem(
+                indexLabel = "Ahora",
+                song = currentSong,
+                isCurrent = true,
+                onClick = {},
+                onRemove = null,
+                onMoveUp = null,
+                onMoveDown = null,
+            )
+
+            PlaybackQueueSectionLabel(
+                if (upcomingSongs.isEmpty()) "Siguiente" else "Siguiente • ${upcomingSongs.size.songCountLabel()}"
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.62f),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (upcomingSongs.isEmpty()) {
+                    item {
+                        Text(
+                            text = "No hay más canciones después de esta.",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                .padding(horizontal = 14.dp, vertical = 16.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                } else {
+                    itemsIndexed(
+                        items = upcomingSongs,
+                        key = { _, song -> song.id },
+                        contentType = { _, _ -> "queueSong" },
+                    ) { index, song ->
+                        Box(modifier = Modifier.animateItem()) {
+                            PlaybackQueueItem(
+                                indexLabel = if (index == 0) "Sig." else "#${index + 2}",
+                                song = song,
+                                isCurrent = false,
+                                onClick = { onPlaySong(song) },
+                                onRemove = { onRemoveSong(song) },
+                                onMoveUp = if (index > 0) ({ onMoveSong(song, -1) }) else null,
+                                onMoveDown = if (index < upcomingSongs.lastIndex) ({ onMoveSong(song, 1) }) else null,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaybackQueueActions(
+    canClearUpcoming: Boolean,
+    canSaveQueue: Boolean,
+    isClearingUpcoming: Boolean,
+    onClearUpcoming: () -> Unit,
+    onSaveQueue: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedButton(
+                onClick = onClearUpcoming,
+                enabled = canClearUpcoming && !isClearingUpcoming,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (isClearingUpcoming) "Limpiando..." else "Limpiar siguientes")
+            }
+            Button(
+                onClick = onSaveQueue,
+                enabled = canSaveQueue && !isClearingUpcoming,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Guardar playlist")
+            }
+        }
+        if (isClearingUpcoming) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun SaveQueueAsPlaylistDialog(
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var playlistName by rememberSaveable { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Guardar cola") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Crea una playlist con el orden actual de la cola.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = playlistName,
+                    onValueChange = { playlistName = it.take(MAX_PLAYLIST_NAME_LENGTH) },
+                    label = { Text("Nombre de playlist") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(playlistName) },
+                enabled = playlistName.isNotBlank(),
+            ) {
+                Text("Guardar")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancelar")
             }
         },
     )
@@ -4975,6 +5503,10 @@ private fun PlaybackQueueItem(
     indexLabel: String,
     song: Song,
     isCurrent: Boolean,
+    onClick: () -> Unit,
+    onRemove: (() -> Unit)?,
+    onMoveUp: (() -> Unit)?,
+    onMoveDown: (() -> Unit)?,
 ) {
     val backgroundColor by animateColorAsState(
         targetValue = if (isCurrent) {
@@ -4989,6 +5521,7 @@ private fun PlaybackQueueItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
+            .clickable(enabled = !isCurrent, onClick = onClick)
             .background(backgroundColor)
             .padding(horizontal = 10.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -5028,6 +5561,47 @@ private fun PlaybackQueueItem(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (onMoveUp != null || onMoveDown != null) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                IconButton(
+                    onClick = { onMoveUp?.invoke() },
+                    enabled = onMoveUp != null,
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowUp,
+                        contentDescription = "Subir ${song.title} en la cola",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (onMoveUp != null) 1f else 0.32f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                IconButton(
+                    onClick = { onMoveDown?.invoke() },
+                    enabled = onMoveDown != null,
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Bajar ${song.title} en la cola",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (onMoveDown != null) 1f else 0.32f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+        if (onRemove != null) {
+            IconButton(onClick = onRemove) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "Quitar ${song.title} de la cola",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
     }
 }
 
