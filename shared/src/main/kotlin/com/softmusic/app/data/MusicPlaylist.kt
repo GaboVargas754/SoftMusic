@@ -4,4 +4,5 @@ data class MusicPlaylist(
     val id: String,
     val name: String,
     val songIds: List<Long>,
+    val coverSongId: Long? = null,
 )

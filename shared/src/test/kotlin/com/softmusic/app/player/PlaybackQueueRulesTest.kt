@@ -127,6 +127,22 @@ class PlaybackQueueRulesTest {
     }
 
     @Test
+    fun `shuffle at queue end does not rebuild when current is outside source`() {
+        val source = songs(1, 2)
+        val current = songs(99).first()
+        val queue = listOf(source[0], current)
+
+        val move = queue.nextQueueMove(
+            sourceSongs = source,
+            currentSong = current,
+            playbackMode = PlaybackMode.Shuffle,
+            manual = true,
+        )
+
+        assertNull(move)
+    }
+
+    @Test
     fun `playlist songs preserve playlist order and skip missing ids`() {
         val library = songs(1, 2, 3)
         val playlist = MusicPlaylist(

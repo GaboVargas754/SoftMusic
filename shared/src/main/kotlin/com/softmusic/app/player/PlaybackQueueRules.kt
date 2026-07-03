@@ -65,7 +65,8 @@ fun List<Song>.nextQueueMove(
             } else {
                 val current = currentSong ?: getOrNull(currentIndex) ?: return null
                 val shuffleSource = sourceSongs.ifEmpty { this }.distinctSongsById()
-                val nextQueue = shuffleSource.shuffledQueueWithCurrentFirst(current)
+                val shuffleCurrent = shuffleSource.firstOrNull { it.id == current.id } ?: return null
+                val nextQueue = shuffleSource.shuffledQueueWithCurrentFirst(shuffleCurrent)
                 if (nextQueue.size <= 1) {
                     if (manual) null else PlaybackQueueMove(queue = nextQueue, index = 0)
                 } else {

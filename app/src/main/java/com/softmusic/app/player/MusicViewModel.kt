@@ -2,7 +2,6 @@ package com.softmusic.app.player
 
 import android.app.Application
 import android.content.ComponentName
-import android.content.Context
 import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
@@ -14,11 +13,18 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
-import com.softmusic.app.data.MusicFolder
 import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.MusicRepository
+import com.softmusic.app.data.PlaylistMutation
 import com.softmusic.app.data.Song
 import com.softmusic.app.data.isIncludedBySmallAudioFilter
+import com.softmusic.app.data.withNewPlaylist
+import com.softmusic.app.data.withPlaylistCover
+import com.softmusic.app.data.withQueueAddedToPlaylist
+import com.softmusic.app.data.withSongAddedToPlaylist
+import com.softmusic.app.data.withSongRemovedFromPlaylist
+import com.softmusic.app.data.withoutPlaylist
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -29,15 +35,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import kotlin.random.Random
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = MusicRepository()
-    private val favoritesPreferences = application.getSharedPreferences(FAVORITES_PREFS_NAME, Context.MODE_PRIVATE)
-    private val playlistsPreferences = application.getSharedPreferences(PLAYLISTS_PREFS_NAME, Context.MODE_PRIVATE)
-    private val playbackSessionPreferences = application.getSharedPreferences(PLAYBACK_SESSION_PREFS_NAME, Context.MODE_PRIVATE)
+    private val persistenceStore = MusicPersistenceStore(application)
     private val _uiState = MutableStateFlow(PlayerUiState(isLoading = true))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
     private val _progressState = MutableStateFlow(PlaybackProgressState())
@@ -45,6 +47,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
+    private var loadSongsJob: Job? = null
     private var positionJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var activeSourceSongs: List<Song> = emptyList()
@@ -93,8 +96,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        loadFavoriteSongIds()
-        loadPlaylists()
+        _uiState.update {
+            it.copy(
+                favoriteSongIds = persistenceStore.loadFavoriteSongIds(),
+                playlists = persistenceStore.loadPlaylists(),
+            )
+        }
         connectController()
     }
 
@@ -143,7 +150,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadSongs() {
-        viewModelScope.launch {
+        loadSongsJob?.cancel()
+        loadSongsJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             runCatching {
                 withContext(Dispatchers.IO) {
@@ -181,6 +189,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     updateFromPlayer(player)
                 }
             }.onFailure { throwable ->
+                if (throwable is CancellationException) return@launch
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -246,69 +255,53 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             currentIds + songId
         }
-        saveFavoriteSongIds(updatedIds)
+        persistenceStore.saveFavoriteSongIds(updatedIds)
         _uiState.update { it.copy(favoriteSongIds = updatedIds) }
     }
 
     fun createPlaylist(name: String) {
-        val cleanName = name.trim()
-            .take(MAX_PLAYLIST_NAME_LENGTH)
-            .takeIf { it.isNotBlank() } ?: return
-        if (_uiState.value.playlists.any { it.name.trim().lowercase() == cleanName.lowercase() }) return
-        val playlist = MusicPlaylist(
-            id = "${System.currentTimeMillis()}-${Random.nextInt(1_000, 9_999)}",
-            name = cleanName,
-            songIds = emptyList(),
+        persistPlaylistMutation(
+            _uiState.value.playlists.withNewPlaylist(
+                name = name,
+                id = newPlaylistId(),
+            ),
         )
-        val playlists = _uiState.value.playlists + playlist
-        savePlaylists(playlists)
-        _uiState.update { it.copy(playlists = playlists) }
     }
 
     fun createPlaylistFromQueue(name: String) {
-        val cleanName = name.trim()
-            .take(MAX_PLAYLIST_NAME_LENGTH)
-            .takeIf { it.isNotBlank() } ?: return
         if (activeQueue.isEmpty()) return
-        if (_uiState.value.playlists.any { it.name.trim().lowercase() == cleanName.lowercase() }) return
-        val playlist = MusicPlaylist(
-            id = "${System.currentTimeMillis()}-${Random.nextInt(1_000, 9_999)}",
-            name = cleanName,
-            songIds = activeQueue.map { it.id },
+        persistPlaylistMutation(
+            _uiState.value.playlists.withNewPlaylist(
+                name = name,
+                id = newPlaylistId(),
+                songIds = activeQueue.map { it.id },
+            ),
         )
-        val playlists = _uiState.value.playlists + playlist
-        savePlaylists(playlists)
-        _uiState.update { it.copy(playlists = playlists) }
+    }
+
+    fun addQueueToPlaylist(playlistId: String): Int {
+        val result = _uiState.value.playlists.withQueueAddedToPlaylist(
+            playlistId = playlistId,
+            queueSongIds = activeQueue.map { it.id },
+        )
+        if (result.changed) persistPlaylists(result.playlists)
+        return result.addedCount
     }
 
     fun deletePlaylist(playlistId: String) {
-        val playlists = _uiState.value.playlists.filterNot { it.id == playlistId }
-        savePlaylists(playlists)
-        _uiState.update { it.copy(playlists = playlists) }
+        persistPlaylistMutation(_uiState.value.playlists.withoutPlaylist(playlistId))
+    }
+
+    fun setPlaylistCover(playlistId: String, songId: Long?) {
+        persistPlaylistMutation(_uiState.value.playlists.withPlaylistCover(playlistId, songId))
     }
 
     fun addSongToPlaylist(playlistId: String, songId: Long) {
-        val playlists = _uiState.value.playlists.map { playlist ->
-            if (playlist.id == playlistId && songId !in playlist.songIds) {
-                playlist.copy(songIds = playlist.songIds + songId)
-            } else {
-                playlist
-            }
-        }
-        savePlaylists(playlists)
-        _uiState.update { it.copy(playlists = playlists) }
+        persistPlaylistMutation(_uiState.value.playlists.withSongAddedToPlaylist(playlistId, songId))
     }
 
     fun removeSongFromPlaylist(playlistId: String, songId: Long) {
-        val playlists = _uiState.value.playlists.map { playlist ->
-            if (playlist.id == playlistId) {
-                playlist.copy(songIds = playlist.songIds.filterNot { it == songId })
-            } else {
-                playlist
-            }
-        }
-        savePlaylists(playlists)
-        _uiState.update { it.copy(playlists = playlists) }
+        persistPlaylistMutation(_uiState.value.playlists.withSongRemovedFromPlaylist(playlistId, songId))
     }
 
     fun playNext(song: Song) {
@@ -359,7 +352,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun dismissRestoredSession() {
-        playbackSessionPreferences.edit().remove(KEY_PLAYBACK_SESSION).apply()
+        persistenceStore.clearPlaybackSession()
         hasRestoredPlaybackSession = true
         controller?.let { player ->
             player.stop()
@@ -474,31 +467,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun next() {
+        val player = controller ?: return
         val queue = activeQueue.ifEmpty { _uiState.value.playableSongs() }
         if (queue.isEmpty()) return
-        val player = controller ?: return
         if (activeQueue.isEmpty()) {
             setActiveQueue(queue = queue, sourceSongs = queue, mode = _uiState.value.playbackMode)
         }
 
-        val currentIndex = queue.currentQueueIndex().coerceAtLeast(0)
-        if (_uiState.value.playbackMode == PlaybackMode.Shuffle && currentIndex >= queue.lastIndex) {
-            val currentSong = queue.getOrNull(currentIndex) ?: return
-            if (rebuildShuffleQueueFromCurrent(player, currentSong, shouldPlay = player.isPlaying || player.playWhenReady)) {
-                playActiveQueueIndex(1)
-            }
-            return
-        }
-        val nextIndex = when (_uiState.value.playbackMode) {
-            PlaybackMode.Ordered -> {
-                if (currentIndex >= queue.lastIndex) return
-                currentIndex + 1
-            }
-            PlaybackMode.Shuffle,
-            PlaybackMode.RepeatList,
-            PlaybackMode.RepeatCurrent -> (currentIndex + 1) % queue.size
-        }
-        playActiveQueueIndex(nextIndex)
+        val move = queue.nextQueueMove(
+            sourceSongs = activeSourceSongs.ifEmpty { queue },
+            currentSong = queue.currentQueueSong(),
+            playbackMode = _uiState.value.playbackMode,
+            manual = true,
+        ) ?: return
+        playQueueMove(move)
     }
 
     fun previous() {
@@ -509,22 +491,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             setActiveQueue(queue = queue, sourceSongs = queue, mode = _uiState.value.playbackMode)
         }
 
-        val currentIndex = queue.currentQueueIndex().coerceAtLeast(0)
-        val previousIndex = when (_uiState.value.playbackMode) {
-            PlaybackMode.Ordered -> if (player.currentPosition > RESTART_PREVIOUS_THRESHOLD_MS) {
-                currentIndex
-            } else {
-                (currentIndex - 1).coerceAtLeast(0)
-            }
-            PlaybackMode.Shuffle,
-            PlaybackMode.RepeatList,
-            PlaybackMode.RepeatCurrent -> if (player.currentPosition > RESTART_PREVIOUS_THRESHOLD_MS) {
-                currentIndex
-            } else {
-                (currentIndex - 1 + queue.size) % queue.size
-            }
-        }
-        playActiveQueueIndex(previousIndex)
+        val move = queue.previousQueueMove(
+            currentSong = queue.currentQueueSong(),
+            playbackMode = _uiState.value.playbackMode,
+            currentPositionMs = player.currentPosition,
+        ) ?: return
+        playQueueMove(move)
     }
 
     fun seekTo(positionMs: Long) {
@@ -742,60 +714,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun loadFavoriteSongIds() {
-        val ids = favoritesPreferences
-            .getStringSet(KEY_FAVORITE_SONG_IDS, emptySet())
-            .orEmpty()
-            .mapNotNull { it.toLongOrNull() }
-            .toSet()
-        _uiState.update { it.copy(favoriteSongIds = ids) }
+    private fun persistPlaylistMutation(mutation: PlaylistMutation) {
+        if (mutation.changed) persistPlaylists(mutation.playlists)
     }
 
-    private fun loadPlaylists() {
-        val raw = playlistsPreferences.getString(KEY_PLAYLISTS, null).orEmpty()
-        val playlists = runCatching {
-            val array = JSONArray(raw)
-            List(array.length()) { index ->
-                val item = array.getJSONObject(index)
-                val songsArray = item.optJSONArray("songIds") ?: JSONArray()
-                MusicPlaylist(
-                    id = item.optString("id"),
-                    name = item.optString("name"),
-                    songIds = List(songsArray.length()) { songIndex -> songsArray.optLong(songIndex) },
-                )
-            }.filter { it.id.isNotBlank() && it.name.isNotBlank() }
-        }.getOrDefault(emptyList())
+    private fun persistPlaylists(playlists: List<MusicPlaylist>) {
+        persistenceStore.savePlaylists(playlists)
         _uiState.update { it.copy(playlists = playlists) }
     }
 
-    private fun saveFavoriteSongIds(ids: Set<Long>) {
-        favoritesPreferences.edit()
-            .putStringSet(KEY_FAVORITE_SONG_IDS, ids.map { it.toString() }.toSet())
-            .apply()
-    }
-
-    private fun savePlaylists(playlists: List<MusicPlaylist>) {
-        val array = JSONArray()
-        playlists.forEach { playlist ->
-            val songIds = JSONArray()
-            playlist.songIds.forEach(songIds::put)
-            array.put(
-                JSONObject()
-                    .put("id", playlist.id)
-                    .put("name", playlist.name)
-                    .put("songIds", songIds),
-            )
-        }
-        playlistsPreferences.edit()
-            .putString(KEY_PLAYLISTS, array.toString())
-            .apply()
-    }
+    private fun newPlaylistId(): String = "${System.currentTimeMillis()}-${Random.nextInt(1_000, 9_999)}"
 
     private fun tryRestorePlaybackSession(player: MediaController): Boolean {
         if (hasRestoredPlaybackSession || player.mediaItemCount > 0) return false
         val songs = _uiState.value.songs
         if (songs.isEmpty()) return false
-        val session = readPlaybackSession() ?: run {
+        val session = persistenceStore.loadPlaybackSession() ?: run {
             hasRestoredPlaybackSession = true
             return false
         }
@@ -835,24 +769,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
-    private fun readPlaybackSession(): PlaybackSessionSnapshot? {
-        val raw = playbackSessionPreferences.getString(KEY_PLAYBACK_SESSION, null).orEmpty()
-        return runCatching {
-            val json = JSONObject(raw)
-            val queueArray = json.optJSONArray("queueIds") ?: JSONArray()
-            val queueIds = List(queueArray.length()) { index -> queueArray.optLong(index) }
-                .filter { it > 0L }
-            val currentSongId = json.optLong("currentSongId").takeIf { it > 0L } ?: return@runCatching null
-            if (queueIds.isEmpty()) return@runCatching null
-            PlaybackSessionSnapshot(
-                queueIds = queueIds,
-                currentSongId = currentSongId,
-                positionMs = json.optLong("positionMs", 0L),
-                playbackMode = enumValueOrNull<PlaybackMode>(json.optString("playbackMode")),
-            )
-        }.getOrNull()
-    }
-
     private fun schedulePlaybackSessionSave(force: Boolean = false) {
         if (activeQueue.isEmpty()) return
         val now = System.currentTimeMillis()
@@ -866,20 +782,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val queue = activeQueue
         val currentSongId = player?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id ?: return
         if (queue.none { it.id == currentSongId }) return
-        val queueIds = JSONArray().apply {
-            queue.forEach { put(it.id) }
-        }
         val positionMs = player?.currentPosition?.coerceAtLeast(0) ?: _progressState.value.positionMs.coerceAtLeast(0)
-        val json = JSONObject()
-            .put("queueIds", queueIds)
-            .put("currentSongId", currentSongId)
-            .put("positionMs", positionMs)
-            .put("playbackMode", _uiState.value.playbackMode.name)
-            .put("savedAt", System.currentTimeMillis())
-
-        playbackSessionPreferences.edit()
-            .putString(KEY_PLAYBACK_SESSION, json.toString())
-            .apply()
+        persistenceStore.savePlaybackSession(
+            PlaybackSessionSnapshot(
+                queueIds = queue.map { it.id },
+                currentSongId = currentSongId,
+                positionMs = positionMs,
+                playbackMode = _uiState.value.playbackMode,
+            ),
+        )
     }
 
     private fun startPositionUpdates() {
@@ -1099,9 +1010,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         updateFromPlayer(player)
     }
 
-    private fun List<Song>.currentQueueIndex(): Int {
+    private fun playQueueMove(move: PlaybackQueueMove) {
+        if (move.queue != activeQueue) {
+            setActiveQueue(
+                queue = move.queue,
+                sourceSongs = activeSourceSongs.ifEmpty { move.queue },
+                mode = _uiState.value.playbackMode,
+                hasManualEdits = activeQueueHasManualEdits,
+            )
+        }
+        playActiveQueueIndex(move.index)
+    }
+
+    private fun List<Song>.currentQueueSong(): Song? {
         val currentId = controller?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id
-        return indexOfFirst { it.id == currentId }
+        return firstOrNull { it.id == currentId }
     }
 
     private fun shouldGenerateQueue(
@@ -1224,41 +1147,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return mapNotNull { songsById[it.id] }
     }
 
-    private fun SortMode.comparator(): Comparator<Song> = when (this) {
-        SortMode.Recent -> compareByDescending<Song> { it.dateAddedSeconds }.thenBy { it.title.lowercase() }
-        SortMode.Title -> compareBy<Song> { it.title.lowercase() }.thenBy { it.artist.lowercase() }
-    }
-
-    private fun List<Song>.filteredAndSorted(
-        selectedFolderPath: String?,
-        sortMode: SortMode,
-        hiddenFolderPaths: Set<String>,
-        excludeSmallAudios: Boolean,
-    ): List<Song> = asSequence()
-        .filter { it.folderPath !in hiddenFolderPaths }
-        .filter { it.isIncludedBySmallAudioFilter(excludeSmallAudios) }
-        .filter { selectedFolderPath == null || it.folderPath == selectedFolderPath }
-        .sortedWith(sortMode.comparator())
-        .toList()
-
-    private fun List<Song>.visibleSongs(hiddenFolderPaths: Set<String>, excludeSmallAudios: Boolean): List<Song> = filter {
-        it.folderPath !in hiddenFolderPaths && it.isIncludedBySmallAudioFilter(excludeSmallAudios)
-    }
-
-    private fun List<MusicFolder>.visibleFolders(hiddenFolderPaths: Set<String>): List<MusicFolder> = filterNot { it.path in hiddenFolderPaths }
-
-    private fun PlayerUiState.playableSongs(): List<Song> = visibleSongs.ifEmpty { songs.visibleSongs(hiddenFolderPaths, excludeSmallAudios) }
-
-    private fun List<Song>.toFolders(): List<MusicFolder> = groupBy { it.folderPath }
-        .map { (path, songs) ->
-            MusicFolder(
-                path = path,
-                name = songs.firstOrNull()?.folderName ?: path.substringAfterLast('/'),
-                songCount = songs.size,
-            )
-        }
-        .sortedWith(compareBy<MusicFolder> { it.name.lowercase() }.thenBy { it.path.lowercase() })
-
     private fun PlaybackMode.toRepeatSetting(): RepeatSetting = when (this) {
         PlaybackMode.RepeatCurrent -> RepeatSetting.One
         PlaybackMode.RepeatList -> RepeatSetting.All
@@ -1266,26 +1154,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         PlaybackMode.Shuffle -> RepeatSetting.Off
     }
 
-    private inline fun <reified T : Enum<T>> enumValueOrNull(value: String?): T? {
-        if (value.isNullOrBlank()) return null
-        return enumValues<T>().firstOrNull { it.name == value }
-    }
-
-    private data class PlaybackSessionSnapshot(
-        val queueIds: List<Long>,
-        val currentSongId: Long,
-        val positionMs: Long,
-        val playbackMode: PlaybackMode?,
-    )
-
     private companion object {
-        const val FAVORITES_PREFS_NAME = "favorite_settings"
-        const val KEY_FAVORITE_SONG_IDS = "favorite_song_ids"
-        const val PLAYLISTS_PREFS_NAME = "playlist_settings"
-        const val KEY_PLAYLISTS = "playlists"
-        const val PLAYBACK_SESSION_PREFS_NAME = "playback_session_settings"
-        const val KEY_PLAYBACK_SESSION = "playback_session"
-        const val RESTART_PREVIOUS_THRESHOLD_MS = 3_000L
         const val POSITION_UPDATE_INTERVAL_MS = 500L
         const val PLAYBACK_SESSION_SAVE_INTERVAL_MS = 2_000L
         const val SLEEP_TIMER_UPDATE_INTERVAL_MS = 1_000L
@@ -1293,7 +1162,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         const val DJ_POSITION_UPDATE_FAST_MS = 200L
         const val MIN_DJ_MIX_SECONDS = 5
         const val MAX_DJ_MIX_SECONDS = 8
-        const val MAX_PLAYLIST_NAME_LENGTH = 50
     }
 
     override fun onCleared() {
@@ -1301,6 +1169,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val future = controllerFuture
         controllerFuture = null
         controller?.removeListener(listener)
+        loadSongsJob?.cancel()
         positionJob?.cancel()
         sleepTimerJob?.cancel()
         future?.let(MediaController::releaseFuture)

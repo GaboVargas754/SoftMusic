@@ -17,4 +17,3 @@ dependencyResolutionManagement {
 rootProject.name = "SoftMusic"
 include(":app")
 include(":shared")
-include(":desktop")

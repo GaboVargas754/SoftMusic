@@ -80,7 +80,19 @@ class MusicService : MediaSessionService() {
         startDjMonitor()
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        val session = mediaSession ?: return null
+        return if (controllerInfo.isAllowedController(session)) session else null
+    }
+
+    private fun MediaSession.ControllerInfo.isAllowedController(session: MediaSession): Boolean {
+        return uid == applicationInfo.uid ||
+            packageName == this@MusicService.packageName ||
+            isTrusted ||
+            session.isMediaNotificationController(this) ||
+            session.isAutomotiveController(this) ||
+            session.isAutoCompanionController(this)
+    }
 
     private fun createMediaNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
