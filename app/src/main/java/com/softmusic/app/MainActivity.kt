@@ -34,19 +34,20 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.softmusic.app.player.AutoDjSettings
 import com.softmusic.app.player.DjMixMode
 import com.softmusic.app.player.MusicService
 import com.softmusic.app.player.MusicViewModel
 import com.softmusic.app.player.PlaybackMode
 import com.softmusic.app.player.SortMode
+import com.softmusic.app.ui.AppUpdateDialog
 import com.softmusic.app.ui.SoftMusicApp
-import com.softmusic.app.ui.theme.AppColorPalette
-import com.softmusic.app.ui.theme.AppThemeMode
 import com.softmusic.app.ui.theme.SoftMusicTheme
 import com.softmusic.app.update.AppUpdateChecker
 import com.softmusic.app.update.AppUpdateInfo
@@ -55,10 +56,16 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+        val preferences = getSharedPreferences(THEME_PREFS_NAME, MODE_PRIVATE)
+        preferences.edit()
+            .remove(KEY_LEGACY_THEME_MODE)
+            .remove(KEY_LEGACY_COLOR_PALETTE)
+            .apply()
         setContent {
-            val preferences = remember { getSharedPreferences(THEME_PREFS_NAME, MODE_PRIVATE) }
-            var themeMode by remember { mutableStateOf(preferences.readThemeMode()) }
-            var colorPalette by remember { mutableStateOf(preferences.readColorPalette()) }
             var highPerformanceMode by remember { mutableStateOf(preferences.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)) }
             var defaultFolderPath by remember { mutableStateOf(preferences.getString(KEY_DEFAULT_FOLDER_PATH, null)) }
             var defaultPlaybackMode by remember { mutableStateOf(preferences.readDefaultPlaybackMode()) }
@@ -66,9 +73,12 @@ class MainActivity : ComponentActivity() {
             var fontScale by remember { mutableStateOf(preferences.readFontScale()) }
             var hiddenFolderPaths by remember { mutableStateOf(preferences.readHiddenFolderPaths()) }
             var excludeSmallAudios by remember { mutableStateOf(preferences.getBoolean(KEY_EXCLUDE_SMALL_AUDIOS, true)) }
-            var djModeEnabled by remember { mutableStateOf(preferences.getBoolean(KEY_DJ_MODE_ENABLED, false)) }
+            var djModeEnabled by remember {
+                mutableStateOf(runCatching { preferences.getBoolean(KEY_DJ_MODE_ENABLED, false) }.getOrDefault(false))
+            }
             var djMixMode by remember { mutableStateOf(preferences.readDjMixMode()) }
             var djMixDurationSeconds by remember { mutableStateOf(preferences.readDjMixDurationSeconds()) }
+            var autoDjSettings by remember { mutableStateOf(preferences.readAutoDjSettings()) }
             var audioPermissionRequested by remember { mutableStateOf(preferences.getBoolean(KEY_AUDIO_PERMISSION_REQUESTED, false)) }
             var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
             var isCheckingForUpdates by remember { mutableStateOf(false) }
@@ -107,10 +117,7 @@ class MainActivity : ComponentActivity() {
                 showAvailableUpdate(updateInfo, ignoreSkippedVersion = false)
             }
 
-            SoftMusicTheme(
-                themeMode = themeMode,
-                colorPalette = colorPalette,
-            ) {
+            SoftMusicTheme {
                 val baseDensity = LocalDensity.current
                 CompositionLocalProvider(
                     LocalDensity provides Density(
@@ -134,8 +141,6 @@ class MainActivity : ComponentActivity() {
                                 },
                                 checkNotificationPermission = ::hasNotificationPermission,
                                 notificationPermissionName = ::notificationPermissionName,
-                                themeMode = themeMode,
-                                colorPalette = colorPalette,
                                 highPerformanceMode = highPerformanceMode,
                                 defaultFolderPath = defaultFolderPath,
                                 defaultPlaybackMode = defaultPlaybackMode,
@@ -146,14 +151,7 @@ class MainActivity : ComponentActivity() {
                                 djModeEnabled = djModeEnabled,
                                 djMixMode = djMixMode,
                                 djMixDurationSeconds = djMixDurationSeconds,
-                                onThemeModeChange = { mode ->
-                                    themeMode = mode
-                                    preferences.edit().putString(KEY_THEME_MODE, mode.name).apply()
-                                },
-                                onColorPaletteChange = { palette ->
-                                    colorPalette = palette
-                                    preferences.edit().putString(KEY_COLOR_PALETTE, palette.name).apply()
-                                },
+                                autoDjSettings = autoDjSettings,
                                 onHighPerformanceModeChange = { enabled ->
                                     highPerformanceMode = enabled
                                     preferences.edit().putBoolean(KEY_HIGH_PERFORMANCE_MODE, enabled).apply()
@@ -205,6 +203,10 @@ class MainActivity : ComponentActivity() {
                                 onDjMixDurationChange = { seconds ->
                                     djMixDurationSeconds = seconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
                                     preferences.edit().putInt(KEY_DJ_MIX_DURATION_SECONDS, djMixDurationSeconds).apply()
+                                },
+                                onAutoDjSettingsChange = { settings ->
+                                    autoDjSettings = settings.sanitized()
+                                    preferences.writeAutoDjSettings(autoDjSettings)
                                 },
                                 onOpenNotificationSettings = ::openNotificationSettings,
                                 onOpenAppSettings = ::openAppSettings,
@@ -290,49 +292,6 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AppUpdateDialog(
-    updateInfo: AppUpdateInfo,
-    onUpdate: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val releaseNotes = updateInfo.releaseNotes.takeIf { it.isNotBlank() }
-    AlertDialog(
-        onDismissRequest = {
-            if (!updateInfo.required) onDismiss()
-        },
-        title = { Text("Nueva versión disponible") },
-        text = {
-            Text(
-                buildString {
-                    append("SoftMusic ${updateInfo.versionName} ya está disponible.")
-                    if (releaseNotes != null) {
-                        append("\n\n")
-                        append(releaseNotes)
-                    }
-                    if (updateInfo.required) {
-                        append("\n\nEsta actualización es obligatoria para continuar.")
-                    }
-                },
-            )
-        },
-        confirmButton = {
-            Button(onClick = onUpdate) {
-                Text("Actualizar")
-            }
-        },
-        dismissButton = if (!updateInfo.required) {
-            {
-                OutlinedButton(onClick = onDismiss) {
-                    Text("Luego")
-                }
-            }
-        } else {
-            null
-        },
-    )
-}
-
-@Composable
 private fun SoftMusicRoot(
     checkAudioPermission: () -> Boolean,
     audioPermissionName: () -> String,
@@ -341,8 +300,6 @@ private fun SoftMusicRoot(
     onAudioPermissionRequested: () -> Unit,
     checkNotificationPermission: () -> Boolean,
     notificationPermissionName: () -> String?,
-    themeMode: AppThemeMode,
-    colorPalette: AppColorPalette,
     highPerformanceMode: Boolean,
     defaultFolderPath: String?,
     defaultPlaybackMode: PlaybackMode,
@@ -353,8 +310,7 @@ private fun SoftMusicRoot(
     djModeEnabled: Boolean,
     djMixMode: DjMixMode,
     djMixDurationSeconds: Int,
-    onThemeModeChange: (AppThemeMode) -> Unit,
-    onColorPaletteChange: (AppColorPalette) -> Unit,
+    autoDjSettings: AutoDjSettings,
     onHighPerformanceModeChange: (Boolean) -> Unit,
     onDefaultFolderChange: (String?) -> Unit,
     onDefaultPlaybackModeChange: (PlaybackMode) -> Unit,
@@ -365,6 +321,7 @@ private fun SoftMusicRoot(
     onDjModeChange: (Boolean) -> Unit,
     onDjMixModeChange: (DjMixMode) -> Unit,
     onDjMixDurationChange: (Int) -> Unit,
+    onAutoDjSettingsChange: (AutoDjSettings) -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onOpenDonation: () -> Unit,
@@ -375,6 +332,7 @@ private fun SoftMusicRoot(
 ) {
     val viewModel: MusicViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val webPanelState by viewModel.webPanelState.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     var permissionGranted by remember { mutableStateOf(checkAudioPermission()) }
     var showAudioPermissionRationale by remember { mutableStateOf(shouldShowAudioPermissionRationale()) }
@@ -429,6 +387,7 @@ private fun SoftMusicRoot(
             djModeEnabled = djModeEnabled,
             djMixMode = djMixMode,
             djMixDurationSeconds = djMixDurationSeconds,
+            autoDjSettings = autoDjSettings,
         )
         defaultsApplied = true
     }
@@ -459,6 +418,7 @@ private fun SoftMusicRoot(
             showAudioPermissionRationale = showAudioPermissionRationale,
             audioPermissionPermanentlyDenied = !permissionGranted && audioPermissionRequested && !showAudioPermissionRationale,
             hasNotificationPermission = notificationPermissionGranted,
+            webPanelState = webPanelState,
             onRequestPermission = {
                 onAudioPermissionRequested()
                 permissionLauncher.launch(audioPermissionName())
@@ -494,8 +454,6 @@ private fun SoftMusicRoot(
             onPlaybackModeChange = viewModel::setPlaybackMode,
             onSortModeChange = viewModel::setSortMode,
             onFolderChange = viewModel::setSelectedFolder,
-            themeMode = themeMode,
-            colorPalette = colorPalette,
             highPerformanceMode = highPerformanceMode,
             defaultFolderPath = defaultFolderPath,
             defaultPlaybackMode = defaultPlaybackMode,
@@ -504,8 +462,7 @@ private fun SoftMusicRoot(
             djModeEnabled = djModeEnabled,
             djMixMode = djMixMode,
             djMixDurationSeconds = djMixDurationSeconds,
-            onThemeModeChange = onThemeModeChange,
-            onColorPaletteChange = onColorPaletteChange,
+            autoDjSettings = autoDjSettings,
             onHighPerformanceModeChange = onHighPerformanceModeChange,
             onDefaultFolderChange = onDefaultFolderChange,
             onDefaultPlaybackModeChange = onDefaultPlaybackModeChange,
@@ -537,9 +494,16 @@ private fun SoftMusicRoot(
                 onDjMixDurationChange(safeSeconds)
                 viewModel.setDjModeConfig(djModeEnabled, djMixMode, safeSeconds)
             },
+            onAutoDjSettingsChange = { settings ->
+                val safeSettings = settings.sanitized()
+                onAutoDjSettingsChange(safeSettings)
+                viewModel.setAutoDjSettings(safeSettings)
+            },
             onOpenNotificationSettings = onOpenNotificationSettings,
             onOpenAppSettings = onOpenAppSettings,
             onOpenDonation = onOpenDonation,
+            onStartWebPanel = viewModel::startWebPanel,
+            onStopWebPanel = viewModel::stopWebPanel,
             isCheckingForUpdates = isCheckingForUpdates,
             updateCheckStatus = updateCheckStatus,
             onCheckForUpdates = onCheckForUpdates,
@@ -585,8 +549,8 @@ private fun SoftMusicRoot(
 }
 
 private const val THEME_PREFS_NAME = "theme_settings"
-private const val KEY_THEME_MODE = "theme_mode"
-private const val KEY_COLOR_PALETTE = "color_palette"
+private const val KEY_LEGACY_THEME_MODE = "theme_mode"
+private const val KEY_LEGACY_COLOR_PALETTE = "color_palette"
 private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"
 private const val KEY_DEFAULT_FOLDER_PATH = "default_folder_path"
 private const val KEY_DEFAULT_PLAYBACK_MODE = "default_playback_mode"
@@ -597,6 +561,10 @@ private const val KEY_EXCLUDE_SMALL_AUDIOS = "exclude_small_audios"
 private const val KEY_DJ_MODE_ENABLED = "dj_mode_enabled"
 private const val KEY_DJ_MIX_MODE = "dj_mix_mode"
 private const val KEY_DJ_MIX_DURATION_SECONDS = "dj_mix_duration_seconds"
+private const val KEY_AUTO_DJ_BEATS = "auto_dj_beats"
+private const val KEY_AUTO_DJ_EFFECT = "auto_dj_effect"
+private const val KEY_AUTO_DJ_INTENSITY = "auto_dj_intensity"
+private const val KEY_AUTO_DJ_SYNC_ENABLED = "auto_dj_sync_enabled"
 private const val KEY_AUDIO_PERMISSION_REQUESTED = "audio_permission_requested"
 private const val KEY_SKIPPED_UPDATE_VERSION_CODE = "skipped_update_version_code"
 private const val PAYPAL_DONATION_URL = "https://paypal.me/ChristianGabriel754"
@@ -604,16 +572,6 @@ private const val MIN_FONT_SCALE = 0.80f
 private const val MAX_FONT_SCALE = 1.20f
 private const val MIN_DJ_MIX_SECONDS = 5
 private const val MAX_DJ_MIX_SECONDS = 8
-
-private fun SharedPreferences.readThemeMode(): AppThemeMode = enumValueOrDefault(
-    value = getString(KEY_THEME_MODE, null),
-    default = AppThemeMode.System,
-)
-
-private fun SharedPreferences.readColorPalette(): AppColorPalette = enumValueOrDefault(
-    value = getString(KEY_COLOR_PALETTE, null),
-    default = AppColorPalette.Green,
-)
 
 private fun SharedPreferences.readDefaultPlaybackMode(): PlaybackMode {
     val value = getString(KEY_DEFAULT_PLAYBACK_MODE, null)
@@ -637,12 +595,38 @@ private fun SharedPreferences.readHiddenFolderPaths(): Set<String> = getStringSe
     .toSet()
 
 private fun SharedPreferences.readDjMixMode(): DjMixMode = enumValueOrDefault(
-    value = getString(KEY_DJ_MIX_MODE, null),
+    value = runCatching { getString(KEY_DJ_MIX_MODE, null) }.getOrNull(),
     default = DjMixMode.Classic,
-)
+).takeUnless { it == DjMixMode.AutoDj } ?: DjMixMode.Classic
 
-private fun SharedPreferences.readDjMixDurationSeconds(): Int = getInt(KEY_DJ_MIX_DURATION_SECONDS, 8)
+private fun SharedPreferences.readDjMixDurationSeconds(): Int = runCatching { getInt(KEY_DJ_MIX_DURATION_SECONDS, 8) }
+    .getOrDefault(8)
     .coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
+
+private fun SharedPreferences.readAutoDjSettings(): AutoDjSettings {
+    val defaults = AutoDjSettings()
+    return AutoDjSettings(
+        beats = runCatching { getInt(KEY_AUTO_DJ_BEATS, defaults.beats) }.getOrDefault(defaults.beats),
+        effect = enumValueOrDefault(
+            value = runCatching { getString(KEY_AUTO_DJ_EFFECT, null) }.getOrNull(),
+            default = defaults.effect,
+        ),
+        intensity = runCatching { getFloat(KEY_AUTO_DJ_INTENSITY, defaults.intensity) }
+            .getOrDefault(defaults.intensity),
+        syncEnabled = runCatching { getBoolean(KEY_AUTO_DJ_SYNC_ENABLED, defaults.syncEnabled) }
+            .getOrDefault(defaults.syncEnabled),
+    ).sanitized()
+}
+
+private fun SharedPreferences.writeAutoDjSettings(settings: AutoDjSettings) {
+    val safeSettings = settings.sanitized()
+    edit()
+        .putInt(KEY_AUTO_DJ_BEATS, safeSettings.beats)
+        .putString(KEY_AUTO_DJ_EFFECT, safeSettings.effect.name)
+        .putFloat(KEY_AUTO_DJ_INTENSITY, safeSettings.intensity)
+        .putBoolean(KEY_AUTO_DJ_SYNC_ENABLED, safeSettings.syncEnabled)
+        .apply()
+}
 
 private inline fun <reified T : Enum<T>> enumValueOrDefault(
     value: String?,

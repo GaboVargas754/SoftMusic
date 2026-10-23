@@ -1,0 +1,639 @@
+[
+  {
+    "id": "play",
+    "label": "Play",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "pause",
+    "label": "Pausa",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "stop",
+    "label": "Detener",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "next",
+    "label": "Siguiente",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "previous",
+    "label": "Anterior",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "fast-forward",
+    "label": "Avance rápido",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "rewind",
+    "label": "Retroceso rápido",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "forward-10",
+    "label": "Avanzar 10 s",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "back-10",
+    "label": "Retroceder 10 s",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "shuffle",
+    "label": "Aleatorio",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "repeat-all",
+    "label": "Repetir lista",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "repeat-one",
+    "label": "Repetir canción",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "repeat-off",
+    "label": "Sin repetición",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "play-circle",
+    "label": "Reproducir circular",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "autoplay",
+    "label": "Reproducción automática",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "queue",
+    "label": "Cola de reproducción",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "play-next",
+    "label": "Reproducir después",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "crossfade",
+    "label": "Fundido entre pistas",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "speed",
+    "label": "Velocidad",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "home",
+    "label": "Inicio",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "library",
+    "label": "Biblioteca",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "search",
+    "label": "Buscar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "favorites",
+    "label": "Favoritos",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "favorite-add",
+    "label": "Añadir favorito",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "favorite-remove",
+    "label": "Quitar favorito",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "playlist",
+    "label": "Playlist",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "playlist-add",
+    "label": "Crear playlist",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "playlist-remove",
+    "label": "Quitar de playlist",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "lists",
+    "label": "Listas",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "tracks",
+    "label": "Canciones",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "album",
+    "label": "Álbum",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "artist",
+    "label": "Artista",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "genres",
+    "label": "Géneros",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "folder",
+    "label": "Carpeta",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "folder-music",
+    "label": "Carpeta musical",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "recent",
+    "label": "Recientes",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "most-played",
+    "label": "Más escuchadas",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "download",
+    "label": "Descargar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "offline",
+    "label": "Disponible sin conexión",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "lyrics",
+    "label": "Letras",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "podcast",
+    "label": "Podcast",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "radio",
+    "label": "Radio",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "volume-high",
+    "label": "Volumen alto",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "volume-low",
+    "label": "Volumen bajo",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "volume-mute",
+    "label": "Silenciar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "equalizer",
+    "label": "Ecualizador",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "waveform",
+    "label": "Onda de audio",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "headphones",
+    "label": "Audífonos",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "speaker",
+    "label": "Altavoz",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "bluetooth",
+    "label": "Bluetooth",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "cast",
+    "label": "Transmitir",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "dj",
+    "label": "DJ",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "turntable",
+    "label": "Tornamesa",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "mixer",
+    "label": "Mezcladora",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "cue",
+    "label": "Punto cue",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "loop",
+    "label": "Bucle",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "beat",
+    "label": "Pulso",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "microphone",
+    "label": "Micrófono",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "record",
+    "label": "Grabar",
+    "selected_style": "filled",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "settings",
+    "label": "Ajustes",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "reload",
+    "label": "Recargar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "sync",
+    "label": "Sincronizar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "timer",
+    "label": "Temporizador",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "sleep-timer",
+    "label": "Temporizador de sueño",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "sort",
+    "label": "Ordenar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "sort-ascending",
+    "label": "Orden ascendente",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "sort-descending",
+    "label": "Orden descendente",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "filter",
+    "label": "Filtros",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "grid",
+    "label": "Vista cuadrícula",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "list-view",
+    "label": "Vista lista",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "edit",
+    "label": "Editar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "delete",
+    "label": "Eliminar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "share",
+    "label": "Compartir",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "info",
+    "label": "Información",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "more-horizontal",
+    "label": "Más horizontal",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "more-vertical",
+    "label": "Más vertical",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "close",
+    "label": "Cerrar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "check",
+    "label": "Confirmar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "add",
+    "label": "Añadir",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "back",
+    "label": "Volver",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "chevron-down",
+    "label": "Desplegar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "chevron-up",
+    "label": "Contraer",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "expand",
+    "label": "Expandir",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "collapse",
+    "label": "Reducir",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "light-mode",
+    "label": "Modo claro",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "dark-mode",
+    "label": "Modo oscuro",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "lock",
+    "label": "Bloquear controles",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "drag-handle",
+    "label": "Arrastrar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "history-clear",
+    "label": "Borrar historial",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "import",
+    "label": "Importar música",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  },
+  {
+    "id": "export",
+    "label": "Exportar",
+    "selected_style": "outline",
+    "normal_color": "#A8AFBD",
+    "selected_color": "#2CE4D4"
+  }
+]

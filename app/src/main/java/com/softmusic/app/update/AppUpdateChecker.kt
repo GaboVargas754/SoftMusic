@@ -16,8 +16,8 @@ data class AppUpdateInfo(
 )
 
 object AppUpdateChecker {
-    private const val UPDATE_MANIFEST_URL = "https://softmusic.mi-portafolio.online/update.json"
-    private const val DEFAULT_UPDATE_URL = "https://softmusic.mi-portafolio.online/downloads/SoftMusic.apk"
+    private const val UPDATE_MANIFEST_URL = "https://softmusic.cgvslab.online/update.json"
+    private const val DEFAULT_UPDATE_URL = "https://softmusic.cgvslab.online/downloads/SoftMusic.apk"
     private const val TIMEOUT_MS = 5_000
 
     suspend fun checkForUpdate(): AppUpdateInfo? = withContext(Dispatchers.IO) {
