@@ -52,6 +52,7 @@ internal fun FullPlayerContent(
     isFavorite: Boolean,
     isPlaying: Boolean,
     playbackMode: PlaybackMode,
+    smartShuffleEnabled: Boolean,
     playButtonColor: Color,
     mutedText: Color,
     favoriteTint: Color,
@@ -126,6 +127,7 @@ internal fun FullPlayerContent(
             FullPlayerTransport(
                 isPlaying = isPlaying,
                 playbackMode = playbackMode,
+                smartShuffleEnabled = smartShuffleEnabled,
                 playButtonColor = playButtonColor,
                 playPauseScale = if (highPerformanceMode) 1f else playPauseScale,
                 onTogglePlayPause = onTogglePlayPause,
@@ -341,6 +343,7 @@ private fun FullPlayerSongMetadata(
 private fun FullPlayerTransport(
     isPlaying: Boolean,
     playbackMode: PlaybackMode,
+    smartShuffleEnabled: Boolean,
     playButtonColor: Color,
     playPauseScale: Float,
     onTogglePlayPause: () -> Unit,
@@ -360,13 +363,21 @@ private fun FullPlayerTransport(
             onClick = onToggleShuffle,
             modifier = Modifier.size(48.dp).semantics {
                 selected = shuffleActive
-                stateDescription = if (shuffleActive) "Activado" else "Desactivado"
+                stateDescription = when {
+                    smartShuffleEnabled && shuffleActive -> "Aleatorio inteligente"
+                    shuffleActive -> "Aleatorio"
+                    else -> "Desactivado"
+                }
             },
         ) {
             Icon(
-                imageVector = if (shuffleActive) MusicIcons.ShuffleSelected else MusicIcons.Shuffle,
+                imageVector = when {
+                    smartShuffleEnabled && shuffleActive -> MusicIcons.SmartShuffleSelected
+                    shuffleActive -> MusicIcons.ShuffleSelected
+                    else -> MusicIcons.Shuffle
+                },
                 contentDescription = if (shuffleActive) "Desactivar aleatorio" else "Activar aleatorio",
-                tint = if (shuffleActive) MaterialTheme.colorScheme.primary else Color.White,
+                tint = if (smartShuffleEnabled && shuffleActive) Color.Unspecified else if (shuffleActive) MaterialTheme.colorScheme.primary else Color.White,
                 modifier = Modifier.size(26.dp),
             )
         }

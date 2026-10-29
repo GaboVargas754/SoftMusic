@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="database" path="listening_history.db" />
+    <exclude domain="database" path="listening_history.db-journal" />
+    <exclude domain="database" path="listening_history.db-wal" />
+    <exclude domain="database" path="listening_history.db-shm" />
+</full-backup-content>

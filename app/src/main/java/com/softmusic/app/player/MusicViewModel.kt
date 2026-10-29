@@ -1,20 +1,24 @@
 package com.softmusic.app.player
 
 import android.app.Application
-import android.content.ComponentName
-import android.net.Uri
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
-import androidx.media3.session.SessionToken
-import com.google.common.util.concurrent.ListenableFuture
+import com.softmusic.app.BuildConfig
+import com.softmusic.app.backup.BackupDocument
+import com.softmusic.app.backup.BackupPreferences
+import com.softmusic.app.backup.BackupSong
+import com.softmusic.app.backup.BackupSongMatch
+import com.softmusic.app.backup.matchBackupSongs
+import com.softmusic.app.backup.validateBackupDocument
 import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.MusicRepository
+import com.softmusic.app.data.MusicLibraryLoader
+import com.softmusic.app.data.MusicLibraryMonitor
+import com.softmusic.app.data.ListeningHistoryRepository
 import com.softmusic.app.data.PlaylistMutation
 import com.softmusic.app.data.Song
 import com.softmusic.app.data.isIncludedBySmallAudioFilter
@@ -24,53 +28,93 @@ import com.softmusic.app.data.withQueueAddedToPlaylist
 import com.softmusic.app.data.withSongAddedToPlaylist
 import com.softmusic.app.data.withSongRemovedFromPlaylist
 import com.softmusic.app.data.withoutPlaylist
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
+import com.softmusic.app.data.withPlaylistRenamed
+import com.softmusic.app.data.withPlaylistSongsReordered
+import com.softmusic.app.data.withSongsAddedToPlaylist
+import com.softmusic.app.data.withoutSongsFromPlaylist
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
-class MusicViewModel(application: Application) : AndroidViewModel(application), WebPanelController {
+class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = MusicRepository()
     private val persistenceStore = MusicPersistenceStore(application)
-    private val _uiState = MutableStateFlow(PlayerUiState(isLoading = true))
+    private val historyRepository = ListeningHistoryRepository.get(application)
+    private val smartQueuePreferences = SmartQueuePreferences(application)
+    private val _uiState = MutableStateFlow(PlayerUiState(isLoading = true, playlistShuffleModes = smartQueuePreferences.loadPlaylistModes()))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
     private val _progressState = MutableStateFlow(PlaybackProgressState())
     val progressState: StateFlow<PlaybackProgressState> = _progressState.asStateFlow()
-    val webPanelState: StateFlow<WebPanelServerState> = WebPanelBridge.serverState
+    private val _pendingBackupCount = MutableStateFlow(0)
+    val pendingBackupCount: StateFlow<Int> = _pendingBackupCount.asStateFlow()
+    private val _backupBusy = MutableStateFlow(false)
+    val backupBusy: StateFlow<Boolean> = _backupBusy.asStateFlow()
+    private val backupLibraryReadiness = MutableStateFlow(BackupLibraryReadiness.PermissionRequired)
+    private var pendingBackupSongs: Map<Long, BackupSong> = emptyMap()
+    private var collectionRevision = 0L
+    private var libraryRevision = 0L
+    private var libraryLoaded = false
+    private val backupCommitInProgress get() = _backupBusy.value
+    private var backupPreview: BackupPreviewSnapshot? = null
+    private var pendingBackupPreview: BackupPreviewSnapshot? = null
 
-    private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var controller: MediaController? = null
-    private var loadSongsJob: Job? = null
+    private val playbackQueue = ActivePlaybackQueue()
+    private val queueController = PlaybackQueueController()
+    private val playbackSession = PlaybackSessionCoordinator(persistenceStore)
+    private val songIndex = MediaItemSongIndex()
+    private val controller: MediaController? get() = controllerConnection.controller
+    private var libraryAccessGranted = false
+    private val playbackModeSelection = PlaybackModeSelection()
+    private var defaultPlaybackMode = PlaybackMode.Ordered
+    private var pendingPlaylistModeChange: String? = null
     private var positionJob: Job? = null
     private var sleepTimerJob: Job? = null
-    private var activeSourceSongs: List<Song> = emptyList()
-    private var activeQueue: List<Song> = emptyList()
-    private var activeQueueIds: List<Long> = emptyList()
-    private var activeQueueMediaIds: List<String> = emptyList()
-    private var activeQueueIdSet: Set<Long> = emptySet()
-    private var activeQueueSource: PlaybackQueueSource = PlaybackQueueSource.Songs
-    private var activeQueueSourceKey: String? = null
-    private var activeQueueMode: PlaybackMode? = null
-    private var activeQueueHasManualEdits: Boolean = false
+    private val activeSourceSongs get() = playbackQueue.snapshot.sourceSongs
+    private val activeQueue get() = playbackQueue.snapshot.songs
+    private val activeQueueIds get() = playbackQueue.snapshot.ids
+    private val activeQueueMediaIds get() = playbackQueue.snapshot.mediaIds
+    private val activeQueueSource get() = playbackQueue.snapshot.source
+    private val activeQueueSourceKey get() = playbackQueue.snapshot.sourceKey
+    private val activeQueueMode get() = playbackQueue.snapshot.mode
+    private val activeQueueHasManualEdits get() = playbackQueue.snapshot.hasManualEdits
     private var lastKnownSongId: Long? = null
-    private var hasRestoredPlaybackSession = false
-    private var lastPlaybackSessionSaveMs = 0L
-    private var lastPlaybackSessionSnapshot: PlaybackSessionSnapshot? = null
-    private var queueMutationDepth = 0
-    private var indexedSongs: List<Song>? = null
-    private var songsByMediaId: Map<String, Song> = emptyMap()
+    private val libraryLoader = MusicLibraryLoader(
+        scope = viewModelScope,
+        load = { repository.loadSongs(application) },
+        onStarted = {
+            libraryRevision++
+            libraryLoaded = false
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            backupLibraryReadiness.value = if (libraryAccessGranted) BackupLibraryReadiness.Loading
+                else BackupLibraryReadiness.PermissionRequired
+        },
+        onLoaded = ::applyLibrarySongs,
+        onFailed = { failure ->
+            libraryLoaded = false
+            _uiState.update {
+                it.copy(isLoading = false, errorMessage = failure.message ?: "No se pudo cargar la música local")
+            }
+            backupLibraryReadiness.value = if (libraryAccessGranted) BackupLibraryReadiness.Failed
+                else BackupLibraryReadiness.PermissionRequired
+        },
+    )
+    private val libraryMonitor = MusicLibraryMonitor(application, viewModelScope, libraryLoader::refresh)
 
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
-            if (queueMutationDepth > 0) return
+            if (queueController.isMutating) return
             if (events.contains(Player.EVENT_TIMELINE_CHANGED)) {
                 syncActiveQueueFromPlayerTimeline(player)
             }
@@ -80,30 +124,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
             )
         }
 
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            if (queueMutationDepth > 0) return
-            val nextSongId = mediaItem?.mediaId?.toLongOrNull()
-            val previousSongId = lastKnownSongId
-            if (
-                reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
-                _uiState.value.playbackMode == PlaybackMode.Shuffle &&
-                activeQueue.size > 1 &&
-                previousSongId == activeQueue.lastOrNull()?.id &&
-                nextSongId == activeQueue.firstOrNull()?.id
-            ) {
-                val currentSong = activeQueue.firstOrNull { it.id == nextSongId } ?: return
-                val player = controller ?: return
-                rebuildShuffleQueueFromCurrent(
-                    player = player,
-                    currentSong = currentSong,
-                    positionMs = player.currentPosition.coerceAtLeast(0),
-                    shouldPlay = player.isPlaying || player.playWhenReady,
-                )
-                return
-            }
-
-        }
-
         override fun onPlayerError(error: PlaybackException) {
             _uiState.update {
                 it.copy(errorMessage = playbackErrorMessage(error))
@@ -111,14 +131,31 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         }
     }
 
+    private val controllerConnection = MediaControllerConnection(application, listener)
+
     init {
-        WebPanelBridge.registerController(this)
+        viewModelScope.launch {
+            MusicService.smartQueueState.collect { smart ->
+                _uiState.update {
+                    it.copy(smartShuffleEnabled = smart.enabled, smartQueueBusy = smart.busy, smartQueueMessage = smart.message)
+                }
+            }
+        }
+        viewModelScope.launch {
+            historyRepository.state.collect { history ->
+                _uiState.update { it.copy(listeningHistory = history) }
+            }
+        }
         _uiState.update {
             it.copy(
                 favoriteSongIds = persistenceStore.loadFavoriteSongIds(),
                 playlists = persistenceStore.loadPlaylists(),
             )
         }
+        prunePlaylistShuffleModes(_uiState.value.playlists)
+        pendingBackupSongs = currentBackupCollections()
+            .copy(pendingSongs = persistenceStore.loadPendingBackupSongs()).pruned().pendingSongs
+        _pendingBackupCount.value = pendingBackupSongs.size
         connectController()
     }
 
@@ -133,18 +170,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         djMixDurationSeconds: Int,
         autoDjSettings: AutoDjSettings = AutoDjSettings(),
     ) {
+        this.defaultPlaybackMode = defaultPlaybackMode
         // Reopening the activity must retain the running session's playback mode.
-        val sessionMode = MusicService.currentPlaybackMode
-            ?: _uiState.value.playbackMode.takeIf { hasRestoredPlaybackSession }
-            ?: defaultPlaybackMode
+        val sessionMode = playbackModeAfterPreferenceRefresh(
+            source = MusicService.currentQueueOrigin?.first ?: activeQueueSource,
+            selectedMode = playbackModeSelection.selectedMode,
+            serviceMode = MusicService.currentPlaybackMode,
+            currentMode = _uiState.value.playbackMode,
+            hasRestoredSession = playbackSession.hasRestoredSession,
+            defaultMode = defaultPlaybackMode,
+        )
         _uiState.update { current ->
             val allFolders = current.songs.toFolders()
             val visibleFolders = current.songs.visibleSongs(emptySet(), excludeSmallAudios).toFolders()
             val selectedFolderPath = defaultFolderPath?.takeIf { folderPath ->
-                folderPath !in hiddenFolderPaths && (
-                    current.songs.isEmpty() ||
-                        current.songs.any { it.folderPath == folderPath && it.isIncludedBySmallAudioFilter(excludeSmallAudios) }
-                    )
+                folderPath.isNotBlank() && folderPath !in hiddenFolderPaths
             }
             current.copy(
                 selectedFolderPath = selectedFolderPath,
@@ -173,59 +213,47 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         controller?.let { applyPlaybackMode(sessionMode, it) }
     }
 
-    fun loadSongs() {
-        loadSongsJob?.cancel()
-        loadSongsJob = viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    repository.loadSongs(getApplication())
-                }
-            }.onSuccess { songs ->
-                _uiState.update { current ->
-                    val allFolders = songs.toFolders()
-                    val visibleFolders = songs.visibleSongs(emptySet(), current.excludeSmallAudios).toFolders()
-                    val availableFolderPaths = allFolders.map { it.path }.toSet()
-                    val hiddenFolderPaths = current.hiddenFolderPaths.filterTo(mutableSetOf()) { it in availableFolderPaths }
-                    val selectedFolderPath = current.selectedFolderPath?.takeIf { folderPath ->
-                        folderPath !in hiddenFolderPaths && songs.any {
-                            it.folderPath == folderPath && it.isIncludedBySmallAudioFilter(current.excludeSmallAudios)
-                        }
-                    }
-                    val sorted = songs.filteredAndSorted(
-                        selectedFolderPath = selectedFolderPath,
-                        sortMode = current.sortMode,
-                        hiddenFolderPaths = hiddenFolderPaths,
-                        excludeSmallAudios = current.excludeSmallAudios,
-                    )
-                    current.copy(
-                        songs = songs,
-                        visibleSongs = sorted,
-                        allFolders = allFolders,
-                        folders = visibleFolders.visibleFolders(hiddenFolderPaths),
-                        selectedFolderPath = selectedFolderPath,
-                        isLoading = false,
-                        errorMessage = null,
-                    )
-                }
-                controller?.let { player ->
-                    if (!tryRestorePlaybackSession(player)) {
-                        syncActiveQueueFromPlayerTimeline(player)
-                        syncQueueOrder()
-                    }
-                    updateFromPlayer(player)
-                }
-            }.onFailure { throwable ->
-                if (throwable is CancellationException) return@launch
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        errorMessage = throwable.message ?: "No se pudo cargar la música local",
-                    )
-                }
-            }
+    fun setLibraryAccess(granted: Boolean) {
+        if (libraryAccessGranted != granted) {
+            libraryRevision++
+            backupLibraryReadiness.value = if (granted) BackupLibraryReadiness.Loading
+                else BackupLibraryReadiness.PermissionRequired
+        }
+        libraryAccessGranted = granted
+        libraryLoader.setEnabled(granted)
+        libraryMonitor.setPermissionGranted(granted)
+        if (!granted) {
+            libraryLoaded = false
+            _uiState.update { it.copy(isLoading = false) }
         }
     }
+
+    fun onLibraryResume() {
+        if (libraryAccessGranted) libraryMonitor.onResume()
+    }
+
+    fun loadSongs() = libraryLoader.refresh()
+
+    private fun applyLibrarySongs(songs: List<Song>) {
+        MusicService.updateSmartQueueSongs(songs)
+        libraryRevision++
+        libraryLoaded = true
+        _uiState.update { it.withRefreshedLibrary(songs) }
+        backupLibraryReadiness.value = if (libraryAccessGranted) BackupLibraryReadiness.Ready
+            else BackupLibraryReadiness.PermissionRequired
+        controller?.let { player ->
+            if (!tryRestorePlaybackSession(player)) {
+                syncActiveQueueFromPlayerTimeline(player)
+                syncQueueOrder()
+            }
+            applyPendingPlaybackMode()
+            updateFromPlayer(player)
+        }
+    }
+
+    fun setListeningHistoryEnabled(enabled: Boolean) = historyRepository.setEnabled(enabled)
+
+    fun clearListeningHistory() = historyRepository.clear()
 
     fun playSong(song: Song) {
         val queue = _uiState.value.playableSongs()
@@ -276,17 +304,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     fun toggleFavorite(songId: Long) {
+        if (!allowCollectionMutation()) return
         val currentIds = _uiState.value.favoriteSongIds
         val updatedIds = if (songId in currentIds) {
             currentIds - songId
         } else {
             currentIds + songId
         }
-        persistenceStore.saveFavoriteSongIds(updatedIds)
+        val pending = currentBackupCollections().copy(favoriteSongIds = updatedIds).pruned().pendingSongs
+        persistenceStore.saveFavoriteSongIds(updatedIds, pending)
+        pendingBackupSongs = pending
+        _pendingBackupCount.value = pending.size
+        collectionRevision++
         _uiState.update { it.copy(favoriteSongIds = updatedIds) }
     }
 
     fun createPlaylist(name: String) {
+        if (!allowCollectionMutation()) return
         persistPlaylistMutation(
             _uiState.value.playlists.withNewPlaylist(
                 name = name,
@@ -296,6 +330,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     fun createPlaylistFromQueue(name: String) {
+        if (!allowCollectionMutation()) return
         if (activeQueue.isEmpty()) return
         persistPlaylistMutation(
             _uiState.value.playlists.withNewPlaylist(
@@ -307,6 +342,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     fun addQueueToPlaylist(playlistId: String): Int {
+        if (!allowCollectionMutation()) return 0
         val result = _uiState.value.playlists.withQueueAddedToPlaylist(
             playlistId = playlistId,
             queueSongIds = activeQueue.map { it.id },
@@ -316,19 +352,210 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     fun deletePlaylist(playlistId: String) {
+        if (!allowCollectionMutation()) return
         persistPlaylistMutation(_uiState.value.playlists.withoutPlaylist(playlistId))
     }
 
     fun setPlaylistCover(playlistId: String, songId: Long?) {
+        if (!allowCollectionMutation()) return
         persistPlaylistMutation(_uiState.value.playlists.withPlaylistCover(playlistId, songId))
     }
 
     fun addSongToPlaylist(playlistId: String, songId: Long) {
+        if (!allowCollectionMutation()) return
         persistPlaylistMutation(_uiState.value.playlists.withSongAddedToPlaylist(playlistId, songId))
     }
 
     fun removeSongFromPlaylist(playlistId: String, songId: Long) {
+        if (!allowCollectionMutation()) return
         persistPlaylistMutation(_uiState.value.playlists.withSongRemovedFromPlaylist(playlistId, songId))
+    }
+
+    fun renamePlaylist(playlistId: String, name: String): Boolean {
+        if (!allowCollectionMutation()) return false
+        val playlists = _uiState.value.playlists
+        if (playlists.firstOrNull { it.id == playlistId }?.name == name.trim()) return true
+        val mutation = playlists.withPlaylistRenamed(playlistId, name)
+        persistPlaylistMutation(mutation)
+        return mutation.changed
+    }
+
+    fun reorderPlaylist(playlistId: String, expectedSongIds: List<Long>, orderedVisibleIds: List<Long>): Boolean {
+        if (!allowCollectionMutation()) return false
+        val state = _uiState.value
+        val playlist = state.playlists.firstOrNull { it.id == playlistId } ?: return false
+        val availableIds = state.songs.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios)
+            .mapTo(HashSet()) { it.id }
+        val visibleIds = playlist.songIds.filter { it in availableIds }
+        val mutation = state.playlists.withPlaylistSongsReordered(
+            playlistId, expectedSongIds, visibleIds, orderedVisibleIds,
+        )
+        persistPlaylistMutation(mutation)
+        return mutation.changed
+    }
+
+    fun addSongsToPlaylist(playlistId: String, songIds: List<Long>): Int {
+        if (!allowCollectionMutation()) return 0
+        val state = _uiState.value
+        val availableIds = state.songs.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios)
+            .mapTo(HashSet()) { it.id }
+        val result = state.playlists.withSongsAddedToPlaylist(playlistId, songIds.filter { it in availableIds })
+        if (result.changed) persistPlaylists(result.playlists)
+        return result.addedCount
+    }
+
+    fun removeSongsFromPlaylist(playlistId: String, songIds: Set<Long>): Int {
+        if (!allowCollectionMutation()) return 0
+        val result = _uiState.value.playlists.withoutSongsFromPlaylist(playlistId, songIds)
+        if (result.changed) persistPlaylists(result.playlists)
+        return result.removedCount
+    }
+
+    suspend fun createBackupDocument(preferences: BackupPreferences): BackupDocument =
+        withContext(Dispatchers.Main.immediate) {
+            prepareWithReadyBackupLibrary { snapshot ->
+                withContext(Dispatchers.Default) {
+                    buildBackupDocument(snapshot.collections, snapshot.library, preferences,
+                        System.currentTimeMillis(), BuildConfig.VERSION_NAME)
+                }
+            }
+        }
+
+    suspend fun previewBackup(document: BackupDocument): List<BackupSongMatch> =
+        withContext(Dispatchers.Main.immediate) {
+            prepareBackupPreview(document).also { backupPreview = it }.matches
+        }
+
+    suspend fun restoreBackup(
+        document: BackupDocument,
+        expectedMatches: List<BackupSongMatch>,
+        applyPreferences: Boolean = false,
+    ): BackupRestoreResult = withContext(Dispatchers.Main.immediate) {
+        val preview = backupPreview
+        check(preview != null && preview.document == document && preview.matches === expectedMatches) {
+            BACKUP_CHANGED_MESSAGE
+        }
+        applyBackupPreview(preview, applyPreferences)
+    }
+
+    suspend fun previewPendingBackup(): List<BackupSongMatch> = withContext(Dispatchers.Main.immediate) {
+        prepareBackupPreview(null).also { pendingBackupPreview = it }.matches
+    }
+
+    suspend fun resolvePendingBackup(expectedMatches: List<BackupSongMatch>): BackupRestoreResult =
+        withContext(Dispatchers.Main.immediate) {
+            val preview = pendingBackupPreview
+            check(preview != null && preview.matches === expectedMatches) { BACKUP_CHANGED_MESSAGE }
+            applyBackupPreview(preview)
+        }
+
+    private suspend fun prepareBackupPreview(document: BackupDocument?): BackupPreviewSnapshot =
+        prepareWithReadyBackupLibrary { snapshot ->
+            val references = document?.songs ?: snapshot.collections.pendingSongs.values.toList()
+            val matches = withContext(Dispatchers.Default) {
+                document?.let(::validateBackupDocument)
+                matchBackupSongs(references, snapshot.library)
+            }
+            BackupPreviewSnapshot(document, snapshot.collections, snapshot.library, snapshot.collectionRevision,
+                snapshot.libraryRevision, references, matches)
+        }
+
+    private suspend fun <T : Any> prepareWithReadyBackupLibrary(
+        prepare: suspend (BackupPreparationSnapshot) -> T,
+    ): T {
+        check(!backupCommitInProgress) { "Espera a que termine la restauración actual." }
+        return prepareWhenBackupLibraryReady(backupLibraryReadiness) {
+            requireBackupLibraryReady()
+            val snapshot = BackupPreparationSnapshot(currentBackupCollections().pruned(), _uiState.value.songs,
+                collectionRevision, libraryRevision)
+            val prepared = prepare(snapshot)
+            check(libraryAccessGranted) { BACKUP_LIBRARY_PERMISSION_MESSAGE }
+            check(!backupCommitInProgress) { "Espera a que termine la restauración actual." }
+            prepared.takeIf {
+                backupLibraryReadiness.value == BackupLibraryReadiness.Ready &&
+                    snapshot.collectionRevision == collectionRevision && snapshot.libraryRevision == libraryRevision
+            }
+        }
+    }
+
+    private suspend fun applyBackupPreview(
+        preview: BackupPreviewSnapshot,
+        applyPreferences: Boolean = false,
+    ): BackupRestoreResult {
+        requireBackupLibraryReady()
+        requireCurrentBackupPreview(preview.collectionRevision, collectionRevision,
+            preview.libraryRevision, libraryRevision, preview.matches, preview.matches)
+        val (plan, validFolderPaths) = withContext(Dispatchers.Default) {
+            val latestMatches = matchBackupSongs(preview.references, preview.library)
+            requireCurrentBackupPreview(preview.collectionRevision, preview.collectionRevision,
+                preview.libraryRevision, preview.libraryRevision, preview.matches, latestMatches)
+            val plan = preview.document?.let { planBackupRestore(preview.collections, it, latestMatches) }
+                ?: planPendingBackupResolution(preview.collections, latestMatches)
+            plan to preview.library.mapTo(HashSet()) { it.folderPath }
+        }
+        requireBackupLibraryReady()
+        requireCurrentBackupPreview(preview.collectionRevision, collectionRevision,
+            preview.libraryRevision, libraryRevision, preview.matches, preview.matches)
+        currentCoroutineContext().ensureActive()
+        _backupBusy.value = true
+        try {
+            // Cancellation is honored up to this boundary; a started write always publishes
+            // its matching in-memory state before collection editing can resume.
+            return withContext(NonCancellable) {
+                val preferences = preview.document?.preferences?.takeIf { applyPreferences }
+                val saved = withContext(Dispatchers.IO) {
+                    persistenceStore.commitBackupCollections(plan.state,
+                        preferences, validFolderPaths)
+                }
+                check(saved) { "No se pudo guardar la restauración. No se cambiaron tus listas ni favoritos." }
+                pendingBackupSongs = plan.state.pendingSongs
+                collectionRevision++
+                _uiState.update { it.copy(playlists = plan.state.playlists, favoriteSongIds = plan.state.favoriteSongIds) }
+                prunePlaylistShuffleModes(plan.state.playlists)
+                _pendingBackupCount.value = pendingBackupSongs.size
+                preferences?.let(::applyRestoredBackupPreferences)
+                backupPreview = null
+                pendingBackupPreview = null
+                plan.result
+            }
+        } finally {
+            _backupBusy.value = false
+        }
+    }
+
+    private fun applyRestoredBackupPreferences(preferences: BackupPreferences) {
+        val folderPaths = _uiState.value.allFolders.mapTo(HashSet()) { it.path }
+        val hiddenFolders = preferences.hiddenFolderPaths.intersect(folderPaths)
+        applyDefaultPreferences(
+            defaultFolderPath = preferences.defaultFolderPath?.takeIf { it in folderPaths && it !in hiddenFolders },
+            defaultPlaybackMode = preferences.playbackMode,
+            defaultSortMode = preferences.sortMode,
+            hiddenFolderPaths = hiddenFolders,
+            excludeSmallAudios = preferences.excludeSmallAudios,
+            djModeEnabled = preferences.djModeEnabled,
+            djMixMode = preferences.djMixMode,
+            djMixDurationSeconds = preferences.djMixDurationSeconds,
+            autoDjSettings = preferences.autoDjSettings,
+        )
+        // General preference application preserves the running session mode. A restore is
+        // an explicit mode choice and must also update that session and its current queue.
+        setPlaybackMode(preferences.playbackMode)
+    }
+
+    private fun requireBackupLibraryReady() {
+        check(!backupCommitInProgress) { "Espera a que termine la restauración actual." }
+        check(libraryAccessGranted) { BACKUP_LIBRARY_PERMISSION_MESSAGE }
+        check(libraryLoaded && !_uiState.value.isLoading) { "Espera a que termine de cargar la biblioteca y vuelve a intentarlo." }
+    }
+
+    private fun currentBackupCollections(): BackupCollectionState = _uiState.value.let {
+        BackupCollectionState(it.playlists, it.favoriteSongIds, pendingBackupSongs)
+    }
+
+    private fun allowCollectionMutation(): Boolean {
+        if (!backupCommitInProgress) return true
+        _uiState.update { it.copy(errorMessage = "Espera a que termine la restauración para editar tus listas o favoritos.") }
+        return false
     }
 
     fun playNext(song: Song) {
@@ -338,6 +565,32 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     fun playAtEnd(song: Song) {
         insertIntoGeneratedQueue(song = song, afterCurrent = false)
     }
+
+    fun cyclePlaylistShuffleMode(playlistId: String) {
+        val state = _uiState.value
+        if (state.playlists.none { it.id == playlistId }) return
+        val mode = (state.playlistShuffleModes[playlistId] ?: PlaylistShuffleMode.Off).next()
+        smartQueuePreferences.setPlaylistMode(playlistId, mode)
+        _uiState.update { it.copy(playlistShuffleModes = smartQueuePreferences.loadPlaylistModes()) }
+        if (activeQueueSource != PlaybackQueueSource.Playlist || activeQueueSourceKey != playlistId) return
+        playbackModeSelection.takePending(ready = true)
+        pendingPlaylistModeChange = playlistId
+        applyPendingPlaylistShuffleMode()
+    }
+
+    private fun applyPendingPlaylistShuffleMode() {
+        val playlistId = pendingPlaylistModeChange ?: return
+        if (activeQueueSource != PlaybackQueueSource.Playlist || activeQueueSourceKey != playlistId) {
+            pendingPlaylistModeChange = null
+            return
+        }
+        if (!canApplyPendingPlaybackMode()) return
+        pendingPlaylistModeChange = null
+        val mode = _uiState.value.playlistShuffleModes[playlistId] ?: PlaylistShuffleMode.Off
+        applyPlaybackModeSelection(mode.playbackMode, force = true, regenerateQueue = true, playlistShuffleMode = mode)
+    }
+
+    fun smartOrderQueue() = MusicService.smartOrderQueue()
 
     fun startSleepTimer(durationMs: Long) {
         val safeDurationMs = durationMs.coerceAtLeast(SLEEP_TIMER_MIN_DURATION_MS)
@@ -382,9 +635,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
 
     fun dismissRestoredSession() {
         MusicService.stopMixPreview(restorePlayback = false)
-        persistenceStore.clearPlaybackSession()
-        lastPlaybackSessionSnapshot = null
-        hasRestoredPlaybackSession = true
+        playbackSession.clear()
         controller?.let { player ->
             player.stop()
             player.clearMediaItems()
@@ -409,32 +660,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
 
     fun removeQueuedSong(song: Song) {
         val currentId = controller?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id
-        if (song.id == currentId || activeQueue.none { it.id == song.id }) return
-        val nextQueue = activeQueue.filterNot { it.id == song.id }
-        if (nextQueue.isEmpty()) return
+        val nextQueue = playbackQueue.removing(song.id, currentId) ?: return
         replaceActiveQueuePreservingPlayback(nextQueue, hasManualEdits = true)
     }
 
     fun moveQueuedSong(song: Song, offset: Int) {
-        if (offset == 0) return
-        val currentId = controller?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id ?: return
-        val currentIndex = activeQueue.indexOfFirst { it.id == currentId }
-        val fromIndex = activeQueue.indexOfFirst { it.id == song.id }
-        if (currentIndex < 0 || fromIndex <= currentIndex) return
-        val toIndex = (fromIndex + offset).coerceIn(currentIndex + 1, activeQueue.lastIndex)
-        if (toIndex == fromIndex) return
-
-        val nextQueue = activeQueue.toMutableList().apply {
-            add(toIndex, removeAt(fromIndex))
-        }
+        val currentId = controller?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id
+        val nextQueue = playbackQueue.moving(song.id, offset, currentId) ?: return
         replaceActiveQueuePreservingPlayback(nextQueue, hasManualEdits = true)
     }
 
     fun clearUpcomingQueue() {
-        val currentId = controller?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id ?: return
-        val currentSong = activeQueue.firstOrNull { it.id == currentId } ?: return
-        if (activeQueue.size <= 1) return
-        replaceActiveQueuePreservingPlayback(listOf(currentSong), hasManualEdits = true, forceFullReset = true)
+        val currentId = controller?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id
+        val nextQueue = playbackQueue.keepingCurrent(currentId) ?: return
+        replaceActiveQueuePreservingPlayback(nextQueue, hasManualEdits = true, forceFullReset = true)
     }
 
     private fun startQueuePlayback(
@@ -445,6 +684,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         forceRegenerate: Boolean = false,
     ) {
         MusicService.stopMixPreview(restorePlayback = false)
+        MusicService.cancelSmartQueueForTransport()
         val player = controller ?: run {
             _uiState.update { it.copy(errorMessage = "El reproductor todavía se está preparando") }
             return
@@ -459,8 +699,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         val safeRequestedSong = requestedSong?.takeIf { requested -> sourceSongs.any { it.id == requested.id } }
         if (requestedSong != null && safeRequestedSong == null) return
 
-        val playbackMode = state.playbackMode
-        if (forceRegenerate || shouldGenerateQueue(sourceSongs, safeRequestedSong, source, sourceKey, playbackMode)) {
+        val playbackSettings = playbackSettingsForSource(source, sourceKey, state.playlistShuffleModes, defaultPlaybackMode)
+        val playbackMode = playbackSettings.playbackMode
+        pendingPlaylistModeChange = null
+        playbackModeSelection.takePending(ready = true)
+        adoptPlaybackSettings(playbackSettings)
+        if (forceRegenerate || playbackQueue.shouldGenerate(sourceSongs, safeRequestedSong, source, sourceKey, playbackMode)) {
+            MusicService.startNewSmartQueue()
             setActiveQueue(
                 queue = sourceSongs.generatePlaybackQueue(playbackMode, safeRequestedSong),
                 source = source,
@@ -493,6 +738,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
 
     fun togglePlayPause() {
         MusicService.stopMixPreview(restorePlayback = false)
+        MusicService.cancelSmartQueueForTransport()
         val player = controller ?: return
         if (player.isPlaying) {
             player.pause()
@@ -504,6 +750,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
 
     fun next() {
         MusicService.stopMixPreview(restorePlayback = false)
+        MusicService.cancelSmartQueueForTransport()
         val player = controller ?: return
         val queue = activeQueue.ifEmpty { _uiState.value.playableSongs() }
         if (queue.isEmpty()) return
@@ -522,6 +769,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
 
     fun previous() {
         MusicService.stopMixPreview(restorePlayback = false)
+        MusicService.cancelSmartQueueForTransport()
         val player = controller ?: return
         val queue = activeQueue.ifEmpty { _uiState.value.playableSongs() }
         if (queue.isEmpty()) return
@@ -539,6 +787,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
 
     fun seekTo(positionMs: Long) {
         MusicService.stopMixPreview(restorePlayback = true)
+        MusicService.cancelSmartQueueForTransport()
         val player = controller ?: return
         val duration = player.duration.takeIf { it > 0 } ?: _progressState.value.durationMs
         val safePosition = positionMs
@@ -550,8 +799,38 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     fun setPlaybackMode(playbackMode: PlaybackMode) {
+        defaultPlaybackMode = playbackMode
+        val wasSmartShuffleEnabled = _uiState.value.smartShuffleEnabled
+        val wasPending = playbackModeSelection.hasPending
+        playbackModeSelection.select(playbackMode, _uiState.value.playbackMode, MusicService.currentPlaybackMode)
+        val pending = playbackModeSelection.takePending(canApplyPendingPlaybackMode())
+        applyPlaybackModeSelection(
+            playbackMode,
+            force = wasSmartShuffleEnabled || wasPending && pending != null,
+            regenerateQueue = pending?.regenerateQueue == true,
+        )
+    }
+
+    private fun canApplyPendingPlaybackMode(): Boolean {
+        val player = controller ?: return false
+        return if (player.mediaItemCount > 0) activeSourceSongs.isNotEmpty() else playbackSession.hasRestoredSession
+    }
+
+    private fun applyPendingPlaybackMode() {
+        applyPendingPlaylistShuffleMode()
+        val pending = playbackModeSelection.takePending(canApplyPendingPlaybackMode()) ?: return
+        applyPlaybackModeSelection(pending.mode, force = true, regenerateQueue = pending.regenerateQueue)
+    }
+
+    private fun applyPlaybackModeSelection(
+        playbackMode: PlaybackMode,
+        force: Boolean = false,
+        regenerateQueue: Boolean = false,
+        playlistShuffleMode: PlaylistShuffleMode? = null,
+    ) {
         val previousMode = _uiState.value.playbackMode
-        if (previousMode == playbackMode) return
+        updateActiveSmartShuffle(playbackMode, smartShuffleEnabled = playlistShuffleMode == PlaylistShuffleMode.SmartShuffle)
+        if (previousMode == playbackMode && !force) return
         MusicService.stopMixPreview(restorePlayback = true)
         val player = controller
         val shouldPlay = player?.let { it.isPlaying || it.playWhenReady } ?: false
@@ -571,8 +850,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
             mixDurationSeconds = _uiState.value.djMixDurationSeconds,
             playbackMode = playbackMode,
         )
-        // Repeat modes share the ordered queue; only entering/leaving Shuffle changes its order.
-        val changesQueueOrder = previousMode == PlaybackMode.Shuffle || playbackMode == PlaybackMode.Shuffle
+        // Applying deferred repeat settings must preserve a manually arranged queue.
+        val preservesPlaylistRepeatOrder = activeQueueSource == PlaybackQueueSource.Playlist &&
+            playlistShuffleMode == null && (playbackMode == PlaybackMode.RepeatList || playbackMode == PlaybackMode.RepeatCurrent)
+        val changesQueueOrder = !preservesPlaylistRepeatOrder &&
+            (regenerateQueue || previousMode == PlaybackMode.Shuffle || playbackMode == PlaybackMode.Shuffle)
         var queueUpdated = false
         if (changesQueueOrder && activeSourceSongs.isNotEmpty()) {
             val state = _uiState.value
@@ -582,7 +864,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
                 activeSourceSongs.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios)
             }
             if (sourceSongs.isNotEmpty()) {
-                val generatedQueue = sourceSongs.generatePlaybackQueue(playbackMode, currentSong)
+                MusicService.startNewSmartQueue()
+                val generatedQueue = if (playlistShuffleMode != null) {
+                    activeQueue.withPlaylistPendingOrder(sourceSongs, currentSong?.id, playlistShuffleMode)
+                } else sourceSongs.generatePlaybackQueue(playbackMode, currentSong)
                 if (player != null && currentSong != null && generatedQueue.any { it.id == currentSong.id }) {
                     replaceActiveQueuePreservingPlayback(
                         queue = generatedQueue,
@@ -599,7 +884,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
             }
         }
         if (!queueUpdated) {
-            activeQueueMode = playbackMode
+            playbackQueue.setMode(playbackMode)
             player?.let { applyPlaybackMode(playbackMode, it) }
             schedulePlaybackSessionSave(force = true)
             player?.let { updateFromPlayer(it) }
@@ -641,52 +926,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     fun setHiddenFolderPaths(hiddenFolderPaths: Set<String>) {
+        val paths = hiddenFolderPaths.mapNotNull { it.trim().takeIf(String::isNotEmpty) }.toSet()
         _uiState.update { current ->
-            val allFolders = current.songs.toFolders()
-            val visibleFolders = current.songs.visibleSongs(emptySet(), current.excludeSmallAudios).toFolders()
-            val availableFolderPaths = allFolders.map { it.path }.toSet()
-            val cleanHiddenFolderPaths = hiddenFolderPaths.filterTo(mutableSetOf()) { it in availableFolderPaths }
-            val selectedFolderPath = current.selectedFolderPath?.takeIf { folderPath ->
-                folderPath !in cleanHiddenFolderPaths && current.songs.any {
-                    it.folderPath == folderPath && it.isIncludedBySmallAudioFilter(current.excludeSmallAudios)
-                }
-            }
-            current.copy(
-                hiddenFolderPaths = cleanHiddenFolderPaths,
-                allFolders = allFolders,
-                folders = visibleFolders.visibleFolders(cleanHiddenFolderPaths),
-                selectedFolderPath = selectedFolderPath,
-                visibleSongs = current.songs.filteredAndSorted(
-                    selectedFolderPath = selectedFolderPath,
-                    sortMode = current.sortMode,
-                    hiddenFolderPaths = cleanHiddenFolderPaths,
-                    excludeSmallAudios = current.excludeSmallAudios,
-                ),
-            )
+            current.copy(hiddenFolderPaths = paths).withRefreshedLibrary(current.songs)
         }
         syncQueueOrder()
     }
 
     fun setExcludeSmallAudios(excludeSmallAudios: Boolean) {
         _uiState.update { current ->
-            val visibleFolders = current.songs.visibleSongs(emptySet(), excludeSmallAudios).toFolders()
-            val selectedFolderPath = current.selectedFolderPath?.takeIf { folderPath ->
-                folderPath !in current.hiddenFolderPaths && (
-                    current.songs.isEmpty() ||
-                        current.songs.any { it.folderPath == folderPath && it.isIncludedBySmallAudioFilter(excludeSmallAudios) }
-                    )
-            }
-            current.copy(
-                excludeSmallAudios = excludeSmallAudios,
-                folders = visibleFolders.visibleFolders(current.hiddenFolderPaths),
-                selectedFolderPath = selectedFolderPath,
-                visibleSongs = current.songs.filteredAndSorted(
-                    selectedFolderPath = selectedFolderPath,
-                    sortMode = current.sortMode,
-                    hiddenFolderPaths = current.hiddenFolderPaths,
-                    excludeSmallAudios = excludeSmallAudios,
-                ),
-            )
+            current.copy(excludeSmallAudios = excludeSmallAudios).withRefreshedLibrary(current.songs)
         }
         syncQueueOrder()
     }
@@ -728,23 +977,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         }
     }
 
-    fun startWebPanel() {
-        val context = getApplication<Application>()
-        runCatching {
-            ContextCompat.startForegroundService(context, WebPanelService.startIntent(context))
-        }
-    }
-
-    fun stopWebPanel() {
-        val context = getApplication<Application>()
-        runCatching {
-            context.startService(WebPanelService.stopIntent(context))
-        }
-    }
-
     fun shutdownPlayback() {
         MusicService.stopMixPreview(restorePlayback = false)
-        stopWebPanel()
         positionJob?.cancel()
         controller?.let { player ->
             player.pause()
@@ -764,41 +998,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     private fun connectController() {
-        val context = getApplication<Application>()
-        val token = SessionToken(context, ComponentName(context, MusicService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
-        controllerFuture = future
-        future.addListener(
-            {
-                val mediaController = runCatching { future.get() }.getOrElse { throwable ->
-                    if (controllerFuture === future) {
-                        _uiState.update {
-                            it.copy(
-                                hasController = false,
-                                errorMessage = throwable.message ?: "No se pudo conectar el reproductor",
-                            )
-                        }
-                    }
-                    return@addListener
-                }
-                if (controllerFuture !== future) {
-                    mediaController.release()
-                    return@addListener
-                }
-                controller = mediaController
+        controllerConnection.connect(
+            onConnected = { mediaController ->
                 val session = if (mediaController.mediaItemCount > 0) {
-                    persistenceStore.loadPlaybackSession()?.takeIf { saved ->
-                        playbackQueueOriginMatchesTimeline(
-                            savedQueueIds = saved.queueIds,
-                            savedCurrentSongId = saved.currentSongId,
-                            timelineMediaIds = mediaController.mediaItemIds(),
-                            currentMediaId = mediaController.currentMediaItem?.mediaId,
-                        )
-                    }
+                    playbackSession.matchingTimelineSession(
+                        mediaController.mediaItemIds(),
+                        mediaController.currentMediaItem?.mediaId,
+                    )
                 } else null
-                activeQueueSource = session?.source ?: PlaybackQueueSource.Songs
-                activeQueueSourceKey = session?.sourceKey
-                mediaController.addListener(listener)
+                val liveOrigin = MusicService.currentQueueOrigin
+                playbackQueue.adoptOrigin(liveOrigin?.first ?: session?.source ?: PlaybackQueueSource.Songs,
+                    if (liveOrigin != null) liveOrigin.second else session?.sourceKey)
+                if (session != null || liveOrigin != null) {
+                    adoptPlaybackSettings(playbackSettingsForSource(activeQueueSource, activeQueueSourceKey,
+                        _uiState.value.playlistShuffleModes, MusicService.currentPlaybackMode ?: session?.playbackMode ?: _uiState.value.playbackMode))
+                } else if (mediaController.mediaItemCount > 0) {
+                    updateActiveSmartShuffle(_uiState.value.playbackMode)
+                }
                 _uiState.update {
                     it.copy(
                         hasController = true,
@@ -808,11 +1024,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
                 }
                 syncActiveQueueFromPlayerTimeline(mediaController)
                 applyPlaybackMode(_uiState.value.playbackMode, mediaController)
-                tryRestorePlaybackSession(mediaController)
+                if (!tryRestorePlaybackSession(mediaController)) syncQueueOrder()
+                applyPendingPlaybackMode()
                 updateFromPlayer(mediaController)
                 startPositionUpdates()
             },
-            ContextCompat.getMainExecutor(context),
+            onFailure = { throwable ->
+                _uiState.update {
+                    it.copy(
+                        hasController = false,
+                        errorMessage = throwable.message ?: "No se pudo conectar el reproductor",
+                    )
+                }
+            },
         )
     }
 
@@ -821,52 +1045,69 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     private fun persistPlaylists(playlists: List<MusicPlaylist>) {
-        persistenceStore.savePlaylists(playlists)
+        if (!allowCollectionMutation()) return
+        val pending = currentBackupCollections().copy(playlists = playlists).pruned().pendingSongs
+        persistenceStore.savePlaylists(playlists, pending)
+        pendingBackupSongs = pending
+        _pendingBackupCount.value = pending.size
+        collectionRevision++
         _uiState.update { it.copy(playlists = playlists) }
+        prunePlaylistShuffleModes(playlists)
+    }
+
+    private fun prunePlaylistShuffleModes(playlists: List<MusicPlaylist>) {
+        smartQueuePreferences.retainPlaylists(playlists.mapTo(HashSet()) { it.id })
+        _uiState.update { it.copy(playlistShuffleModes = smartQueuePreferences.loadPlaylistModes()) }
+        if (activeQueueSource == PlaybackQueueSource.Playlist) updateActiveSmartShuffle(_uiState.value.playbackMode)
+    }
+
+    private fun updateActiveSmartShuffle(playbackMode: PlaybackMode, smartShuffleEnabled: Boolean = _uiState.value.smartShuffleEnabled) {
+        val enabled = smartShuffleEnabled && activeQueueSource == PlaybackQueueSource.Playlist && playbackMode == PlaybackMode.Shuffle &&
+            _uiState.value.playlistShuffleModes[activeQueueSourceKey] == PlaylistShuffleMode.SmartShuffle
+        _uiState.update { it.copy(smartShuffleEnabled = enabled) }
+        MusicService.updateSmartShuffleEnabled(enabled)
+    }
+
+    private fun adoptPlaybackSettings(settings: PlaylistPlaybackSettings) {
+        _uiState.update { it.copy(playbackMode = settings.playbackMode,
+            shuffleEnabled = settings.playbackMode == PlaybackMode.Shuffle,
+            repeatSetting = settings.playbackMode.toRepeatSetting(), smartShuffleEnabled = settings.smartShuffleEnabled) }
+        MusicService.updateSmartShuffleEnabled(settings.smartShuffleEnabled)
+        MusicService.updateDjConfig(_uiState.value.djModeEnabled, _uiState.value.djMixMode,
+            _uiState.value.djMixDurationSeconds, settings.playbackMode)
     }
 
     private fun newPlaylistId(): String = "${System.currentTimeMillis()}-${Random.nextInt(1_000, 9_999)}"
 
     private fun tryRestorePlaybackSession(player: MediaController): Boolean {
-        if (hasRestoredPlaybackSession || player.mediaItemCount > 0) return false
-        val songs = _uiState.value.songs
-        if (songs.isEmpty()) return false
-        val session = persistenceStore.loadPlaybackSession() ?: run {
-            hasRestoredPlaybackSession = true
-            return false
-        }
-        val songsById = songs.associateBy { it.id }
-        val restoredQueue = session.queueIds.mapNotNull { songsById[it] }.distinctSongsById()
-        if (restoredQueue.isEmpty()) {
-            hasRestoredPlaybackSession = true
-            return false
-        }
-        val currentIndex = restoredQueue.indexOfFirst { it.id == session.currentSongId }.takeIf { it >= 0 } ?: 0
-        val currentSong = restoredQueue[currentIndex]
-        val positionMs = session.positionMs
-            .coerceAtLeast(0)
-            .coerceAtMost(currentSong.durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE)
-        val playbackMode = session.playbackMode ?: _uiState.value.playbackMode
-
-        hasRestoredPlaybackSession = true
+        val restored = playbackSession.restore(
+            playerHasItems = player.mediaItemCount > 0,
+            songs = _uiState.value.songs,
+            fallbackMode = _uiState.value.playbackMode,
+        ) ?: return false
+        val playbackSettings = playbackSettingsForSource(restored.source, restored.sourceKey,
+            _uiState.value.playlistShuffleModes, restored.playbackMode)
+        val playbackMode = playbackSettings.playbackMode
+        adoptPlaybackSettings(playbackSettings)
         _uiState.update {
             it.copy(
                 playbackMode = playbackMode,
                 shuffleEnabled = playbackMode == PlaybackMode.Shuffle,
                 repeatSetting = playbackMode.toRepeatSetting(),
                 restoredSessionAvailable = true,
-                restoredSessionPositionMs = positionMs,
+                restoredSessionPositionMs = restored.positionMs,
             )
         }
         setActiveQueue(
-            queue = restoredQueue,
-            source = session.source,
-            sourceKey = session.sourceKey,
-            sourceSongs = sourceSongsForTimeline(restoredQueue, session.source, session.sourceKey),
+            queue = restored.queue,
+            source = restored.source,
+            sourceKey = restored.sourceKey,
+            sourceSongs = sourceSongsForTimeline(restored.queue, restored.source, restored.sourceKey),
             mode = playbackMode,
             hasManualEdits = true,
         )
-        player.setMediaItems(restoredQueue.toMediaItems(), currentIndex, positionMs)
+        MusicService.markSmartQueueEdited()
+        player.setMediaItems(restored.queue.toMediaItems(), restored.currentIndex, restored.positionMs)
         applyPlaybackMode(playbackMode, player)
         MusicService.updateDjConfig(_uiState.value.djModeEnabled, _uiState.value.djMixMode,
             _uiState.value.djMixDurationSeconds, playbackMode)
@@ -876,29 +1117,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     private fun schedulePlaybackSessionSave(force: Boolean = false) {
-        if (activeQueue.isEmpty()) return
-        val now = System.currentTimeMillis()
-        if (!force && now - lastPlaybackSessionSaveMs < PLAYBACK_SESSION_SAVE_INTERVAL_MS) return
-        lastPlaybackSessionSaveMs = now
-        savePlaybackSession()
+        playbackSession.scheduleSave(playbackSessionSnapshot(), activeQueue.isNotEmpty(), force)
     }
 
     private fun savePlaybackSession() {
+        playbackSession.save(playbackSessionSnapshot())
+    }
+
+    private fun playbackSessionSnapshot(): PlaybackSessionSnapshot? {
         val player = controller
-        val currentSongId = player?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id ?: return
-        if (currentSongId !in activeQueueIdSet) return
-        val positionMs = player?.currentPosition?.coerceAtLeast(0) ?: _progressState.value.positionMs.coerceAtLeast(0)
-        val snapshot = PlaybackSessionSnapshot(
-            queueIds = activeQueueIds,
-            currentSongId = currentSongId,
-            positionMs = positionMs,
-            playbackMode = _uiState.value.playbackMode,
-            source = activeQueueSource,
-            sourceKey = activeQueueSourceKey,
-        )
-        if (snapshot == lastPlaybackSessionSnapshot) return
-        lastPlaybackSessionSnapshot = snapshot
-        persistenceStore.savePlaybackSession(snapshot)
+        val currentSongId = player?.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id
+        val positionMs = player?.currentPosition ?: _progressState.value.positionMs
+        return playbackQueue.snapshot.playbackSessionSnapshot(currentSongId, positionMs, _uiState.value.playbackMode)
     }
 
     private fun startPositionUpdates() {
@@ -913,42 +1143,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         }
     }
 
-    private fun rebuildShuffleQueueFromCurrent(
-        player: Player,
-        currentSong: Song,
-        positionMs: Long = player.currentPosition.coerceAtLeast(0),
-        shouldPlay: Boolean,
-    ): Boolean {
-        if (!rebuildShuffleQueueInMemoryFromCurrent(currentSong)) return false
-        val nextQueue = activeQueue
-        player.setMediaItems(nextQueue.toMediaItems(), 0, positionMs.coerceAtLeast(0))
-        applyPlaybackMode(PlaybackMode.Shuffle, player)
-        player.prepare()
-        if (shouldPlay) player.play()
-        updateFromPlayer(player)
-        return true
-    }
-
-    private fun rebuildShuffleQueueInMemoryFromCurrent(currentSong: Song): Boolean {
-        val sourceSongs = activeSourceSongs.ifEmpty { _uiState.value.playableSongs() }.distinctSongsById()
-        val current = sourceSongs.firstOrNull { it.id == currentSong.id } ?: return false
-        if (sourceSongs.size <= 1) return false
-
-        setActiveQueue(
-            queue = sourceSongs.shuffledQueueWithCurrentFirst(current),
-            sourceSongs = sourceSongs,
-            mode = PlaybackMode.Shuffle,
-        )
-        return true
-    }
-
     private fun syncQueueOrder() {
         val player = controller ?: return
         if (player.mediaItemCount == 0) return
         val state = _uiState.value
         val availableSongs = state.songs.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios)
         val nextSourceSongs = activeSourceSongs.refreshedFrom(availableSongs)
-        val nextQueue = activeQueue.refreshedFrom(availableSongs)
+        val nextQueue = activeQueue.refreshedQueuePreservingCurrent(
+            availableSongs, player.currentMediaItem?.mediaId?.toLongOrNull(),
+        )
         if (nextQueue.isEmpty()) return
 
         val currentId = player.currentMediaItem?.mediaId?.toLongOrNull() ?: return
@@ -998,59 +1201,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         forceFullReset: Boolean = false,
     ) {
         MusicService.stopMixPreview(restorePlayback = true)
+        if (hasManualEdits) MusicService.markSmartQueueEdited()
         val player = controller ?: return
-        if (queue.isEmpty()) return
-
         val currentId = player.currentMediaItem?.mediaId?.toLongOrNull() ?: _uiState.value.currentSong?.id
-        val currentIndex = queue.indexOfFirst { it.id == currentId }
-        if (currentIndex < 0) return
-
-        val wasPlaying = shouldPlay ?: (player.isPlaying || player.playWhenReady)
-        val currentPosition = positionMs ?: player.currentPosition.coerceAtLeast(0)
-        mutatePlayerQueue {
-            val updatedIncrementally = !forceFullReset && syncPlayerQueueByBlocks(player, queue, currentId)
-            if (!updatedIncrementally) {
-                player.setMediaItems(queue.toMediaItems(), currentIndex, currentPosition)
-                player.prepare()
-            }
-            applyPlaybackMode(mode, player)
-            if (player.playWhenReady != wasPlaying) player.playWhenReady = wasPlaying
-            setActiveQueue(queue = queue, sourceSongs = sourceSongs, mode = mode, hasManualEdits = hasManualEdits)
-        }
-        updateFromPlayer(player)
-    }
-
-    private fun syncPlayerQueueByBlocks(player: Player, queue: List<Song>, currentSongId: Long?): Boolean {
-        val currentId = currentSongId ?: return false
-        if (player.currentMediaItem?.mediaId != currentId.toString()) return false
-        val currentIds = player.mediaItemIds().map { it.toLongOrNull() ?: return false }
-        val desiredIds = queue.map { it.id }
-        val patches = planPlaybackQueueUpdate(currentIds, desiredIds, currentId) ?: return false
-        if (patches.isEmpty()) return true
-        if (!player.isCommandAvailable(Player.COMMAND_CHANGE_MEDIA_ITEMS)) return false
-
-        val byId = queue.associateBy { it.id }
-        // Suffix first, then prefix: neither replacement includes the playing MediaItem.
-        // Media3 keeps that item's position/decoder while its index changes.
-        for (patch in patches) {
-            val replacement = patch.songIds.map { id -> byId.getValue(id).toMediaItem() }
-            player.replaceMediaItems(patch.fromIndex, patch.toIndex, replacement)
-        }
-        return player.mediaItemIds() == desiredIds.map(Long::toString) &&
-            player.currentMediaItem?.mediaId == currentId.toString()
-    }
-
-    private inline fun <T> mutatePlayerQueue(block: () -> T): T {
-        queueMutationDepth++
-        return try {
-            block()
-        } finally {
-            queueMutationDepth--
-        }
-    }
-
-    private fun Player.mediaItemIds(): List<String> = List(mediaItemCount) { index ->
-        getMediaItemAt(index).mediaId
+        val replaced = queueController.replacePreservingPlayback(
+            player = player,
+            queue = queue,
+            currentSongId = currentId,
+            mode = mode,
+            positionMs = positionMs,
+            shouldPlay = shouldPlay,
+            forceFullReset = forceFullReset,
+            onReplaced = {
+                setActiveQueue(queue = queue, sourceSongs = sourceSongs, mode = mode, hasManualEdits = hasManualEdits)
+            },
+        )
+        if (replaced) updateFromPlayer(player)
     }
 
     private fun setActiveQueue(
@@ -1061,15 +1227,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         mode: PlaybackMode = _uiState.value.playbackMode,
         hasManualEdits: Boolean = false,
     ) {
-        activeSourceSongs = sourceSongs
-        activeQueue = queue
-        activeQueueIds = queue.map { it.id }
-        activeQueueMediaIds = activeQueueIds.map(Long::toString)
-        activeQueueIdSet = activeQueueIds.toSet()
-        activeQueueSource = source
-        activeQueueSourceKey = sourceKey
-        activeQueueMode = mode
-        activeQueueHasManualEdits = hasManualEdits
+        playbackQueue.replace(queue, sourceSongs, source, sourceKey, mode, hasManualEdits)
+        MusicService.updateQueueOrigin(source, sourceKey)
         _uiState.update {
             it.copy(
                 playbackQueue = queue,
@@ -1081,15 +1240,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     }
 
     private fun clearActiveQueue() {
-        activeSourceSongs = emptyList()
-        activeQueue = emptyList()
-        activeQueueIds = emptyList()
-        activeQueueMediaIds = emptyList()
-        activeQueueIdSet = emptySet()
-        activeQueueSource = PlaybackQueueSource.Songs
-        activeQueueSourceKey = null
-        activeQueueMode = null
-        activeQueueHasManualEdits = false
+        playbackQueue.clear()
+        MusicService.updateQueueOrigin(PlaybackQueueSource.Songs, null)
+        pendingPlaylistModeChange = null
+        updateActiveSmartShuffle(_uiState.value.playbackMode)
         _uiState.update {
             it.copy(
                 playbackQueue = emptyList(),
@@ -1101,24 +1255,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
 
     private fun playActiveQueueIndex(index: Int) {
         MusicService.stopMixPreview(restorePlayback = false)
+        MusicService.cancelSmartQueueForTransport()
         val player = controller ?: return
-        val queue = activeQueue
-        if (queue.isEmpty()) return
-
-        val safeIndex = index.coerceIn(0, queue.lastIndex)
-        val shouldPlay = player.isPlaying || player.playWhenReady
-        mutatePlayerQueue {
-            if (player.mediaItemIds() == activeQueueMediaIds) {
-                player.seekTo(safeIndex, 0L)
-                if (player.playbackState == Player.STATE_IDLE) player.prepare()
-            } else {
-                player.setMediaItems(queue.toMediaItems(), safeIndex, 0L)
-                player.prepare()
-            }
-            applyPlaybackMode(_uiState.value.playbackMode, player)
-            if (player.playWhenReady != shouldPlay) player.playWhenReady = shouldPlay
+        if (queueController.playIndex(player, playbackQueue.snapshot, index, _uiState.value.playbackMode)) {
+            updateFromPlayer(player, forceSessionSave = true)
         }
-        updateFromPlayer(player, forceSessionSave = true)
     }
 
     private fun playQueueMove(move: PlaybackQueueMove) {
@@ -1138,30 +1279,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         return firstOrNull { it.id == currentId }
     }
 
-    private fun shouldGenerateQueue(
-        sourceSongs: List<Song>,
-        requestedSong: Song?,
-        source: PlaybackQueueSource,
-        sourceKey: String?,
-        playbackMode: PlaybackMode,
-    ): Boolean {
-        if (activeQueue.isEmpty() || activeSourceSongs.isEmpty()) return true
-        if (activeQueueHasManualEdits) return true
-        if (activeQueueSource != source || activeQueueSourceKey != sourceKey) return true
-        if (activeQueueMode != playbackMode) return true
-        if (requestedSong != null && activeQueue.none { it.id == requestedSong.id }) return true
-        if (activeSourceSongs.map { it.id } != sourceSongs.map { it.id }) return true
-        return false
-    }
-
     private fun applyPlaybackMode(playbackMode: PlaybackMode, player: Player) {
-        player.shuffleModeEnabled = false
-        player.repeatMode = when (playbackMode) {
-            PlaybackMode.Ordered -> Player.REPEAT_MODE_OFF
-            PlaybackMode.RepeatList -> Player.REPEAT_MODE_ALL
-            PlaybackMode.RepeatCurrent -> Player.REPEAT_MODE_ONE
-            PlaybackMode.Shuffle -> Player.REPEAT_MODE_ALL
-        }
+        player.applyPlaybackMode(playbackMode)
     }
 
     private fun updateFromPlayer(player: Player, forceSessionSave: Boolean = false) {
@@ -1232,104 +1351,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     ): List<Song> {
         val state = _uiState.value
         val ids = queue.mapTo(HashSet()) { it.id }
-        val sourceSongs = collectionMixKey(source, sourceKey)?.let(::collectionSongs)
-            ?: state.songs.filteredAndSorted(
-                selectedFolderPath = null,
-                sortMode = state.sortMode,
-                hiddenFolderPaths = state.hiddenFolderPaths,
-                excludeSmallAudios = state.excludeSmallAudios,
-            )
+        val availableSongs = state.songs.visibleSongs(state.hiddenFolderPaths, state.excludeSmallAudios)
+        val sourceSongs = if (source == PlaybackQueueSource.History) {
+            state.listeningHistory.orderedSongs(availableSongs, sourceKey.orEmpty())
+        } else {
+            collectionMixKey(source, sourceKey)?.let(::collectionSongs)
+                ?: availableSongs.sortedWith(state.sortMode.songComparator())
+        }
         return sourceSongs.filter { it.id in ids }.ifEmpty { queue }
     }
 
-    private fun songForMediaId(mediaId: String?): Song? {
-        mediaId ?: return null
-        val songs = _uiState.value.songs
-        if (indexedSongs !== songs) {
-            indexedSongs = songs
-            songsByMediaId = songs.associateBy { it.id.toString() }
-        }
-        return songsByMediaId[mediaId] ?: activeQueue.firstOrNull { it.id.toString() == mediaId }
-    }
-
-    override fun snapshot(): WebPanelSnapshot {
-        val state = _uiState.value
-        val progress = _progressState.value
-        val durationMs = progress.durationMs.takeIf { it > 0L }
-            ?: state.currentSong?.durationMs
-            ?: 0L
-        return WebPanelSnapshot(
-            isPlaying = state.isPlaying,
-            currentSong = state.currentSong,
-            positionMs = progress.positionMs,
-            durationMs = durationMs,
-            playbackMode = state.playbackMode,
-            queue = activeQueue.ifEmpty { state.playbackQueue },
-            playlists = state.playlists,
-        )
-    }
-
-    override suspend fun handleCommand(command: String): Boolean = withContext(Dispatchers.Main.immediate) {
-        when (command) {
-            "toggle", "playPause" -> {
-                if (controller == null) return@withContext false
-                togglePlayPause()
-                true
-            }
-            "play" -> {
-                MusicService.stopMixPreview(restorePlayback = false)
-                val player = controller ?: return@withContext false
-                if (_uiState.value.currentSong != null) {
-                    player.play()
-                    updateFromPlayer(player)
-                } else {
-                    playVisibleList()
-                }
-                true
-            }
-            "pause" -> {
-                MusicService.stopMixPreview(restorePlayback = false)
-                val player = controller ?: return@withContext false
-                player.pause()
-                updateFromPlayer(player)
-                true
-            }
-            "next" -> {
-                if (controller == null) return@withContext false
-                next()
-                true
-            }
-            "previous" -> {
-                if (controller == null) return@withContext false
-                previous()
-                true
-            }
-            else -> false
-        }
-    }
-
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    private fun Song.toMediaItem(): MediaItem = MediaItem.Builder()
-        .setMediaId(id.toString())
-        .setUri(Uri.parse(uri))
-        .setMediaMetadata(
-            MediaMetadata.Builder()
-                .setTitle(title)
-                .setArtist(artist)
-                .setAlbumTitle(album)
-                .setDisplayTitle(title)
-                .setSubtitle(artist)
-                .setDescription(album)
-                .setArtworkUri(artworkUri?.let(Uri::parse))
-                .setDurationMs(durationMs.coerceAtLeast(0L))
-                .setIsPlayable(true)
-                .build(),
-        )
-        .build()
-
-    private fun List<Song>.toMediaItems(): List<MediaItem> = map { song ->
-        song.toMediaItem()
-    }
+    private fun songForMediaId(mediaId: String?): Song? =
+        songIndex.find(mediaId, _uiState.value.songs, activeQueue)
 
     private fun List<Song>.refreshedFrom(songs: List<Song>): List<Song> {
         val songsById = songs.associateBy { it.id }
@@ -1343,9 +1376,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
         PlaybackMode.Shuffle -> RepeatSetting.Off
     }
 
+    private data class BackupPreparationSnapshot(
+        val collections: BackupCollectionState,
+        val library: List<Song>,
+        val collectionRevision: Long,
+        val libraryRevision: Long,
+    )
+
+    private data class BackupPreviewSnapshot(
+        val document: BackupDocument?,
+        val collections: BackupCollectionState,
+        val library: List<Song>,
+        val collectionRevision: Long,
+        val libraryRevision: Long,
+        val references: List<BackupSong>,
+        val matches: List<BackupSongMatch>,
+    )
+
     private companion object {
         const val POSITION_UPDATE_INTERVAL_MS = 500L
-        const val PLAYBACK_SESSION_SAVE_INTERVAL_MS = 2_000L
         const val SLEEP_TIMER_UPDATE_INTERVAL_MS = 1_000L
         const val SLEEP_TIMER_MIN_DURATION_MS = 1_000L
         const val DJ_POSITION_UPDATE_FAST_MS = 200L
@@ -1356,15 +1405,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application), 
     override fun onCleared() {
         MusicService.stopMixPreview(restorePlayback = true)
         savePlaybackSession()
-        val future = controllerFuture
-        controllerFuture = null
-        controller?.removeListener(listener)
-        WebPanelBridge.unregisterController(this)
-        loadSongsJob?.cancel()
+        libraryMonitor.close()
+        libraryLoader.close()
         positionJob?.cancel()
         sleepTimerJob?.cancel()
-        future?.let(MediaController::releaseFuture)
-        controller = null
+        controllerConnection.close()
         super.onCleared()
     }
 }

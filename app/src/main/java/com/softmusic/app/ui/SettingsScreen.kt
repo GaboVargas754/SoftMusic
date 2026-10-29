@@ -19,7 +19,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
@@ -33,6 +32,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -51,13 +51,16 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.softmusic.app.BuildConfig
 import com.softmusic.app.data.MusicFolder
 import com.softmusic.app.player.AutoDjSettings
 import com.softmusic.app.player.DjMixMode
+import com.softmusic.app.player.MusicService
 import com.softmusic.app.player.PlaybackMode
 import com.softmusic.app.player.SortMode
-import com.softmusic.app.player.WebPanelServerState
 import kotlin.math.roundToInt
 
 // Keep the same entry point for the full screen and the player's settings sheet.
@@ -68,7 +71,6 @@ internal fun SettingsSheet(
     hasAudioPermission: Boolean,
     audioPermissionPermanentlyDenied: Boolean,
     hasNotificationPermission: Boolean,
-    webPanelState: WebPanelServerState,
     allFolders: List<MusicFolder>,
     folders: List<MusicFolder>,
     defaultFolderPath: String?,
@@ -97,12 +99,29 @@ internal fun SettingsSheet(
     onOpenNotificationSettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
     onOpenDonation: () -> Unit,
-    onStartWebPanel: () -> Unit,
-    onStopWebPanel: () -> Unit,
     isCheckingForUpdates: Boolean,
     updateCheckStatus: String?,
     onCheckForUpdates: () -> Unit,
+    historyEnabled: Boolean,
+    historyHasEntries: Boolean,
+    onHistoryEnabledChange: (Boolean) -> Unit,
+    onClearListeningHistory: () -> Unit,
 ) {
+    var confirmClearHistory by rememberSaveable { mutableStateOf(false) }
+    val backupSettings = rememberBackupSettingsUi()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                MusicService.stopMixPreview(restorePlayback = true)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            MusicService.stopMixPreview(restorePlayback = true)
+        }
+    }
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
         LazyColumn(
             modifier = Modifier.widthIn(max = 640.dp).fillMaxWidth(),
@@ -175,10 +194,18 @@ internal fun SettingsSheet(
                 }
             }
 
+            if (backupSettings.controller.actions != null) {
+                item(key = "backup") {
+                    SettingsGroup(title = "Respaldo y restauración") {
+                        BackupSettingsRows(backupSettings)
+                    }
+                }
+            }
+
             item(key = "playback") {
                 SettingsGroup(title = "Reproducción") {
                     SettingsChoiceRow(
-                        title = "Modo inicial",
+                        title = "Modo de reproducción",
                         selectedValue = defaultPlaybackMode,
                         options = PlaybackMode.entries.map { SettingsOption(it, it.label) },
                         onSelect = onDefaultPlaybackModeChange,
@@ -202,9 +229,22 @@ internal fun SettingsSheet(
                 }
             }
 
-            item(key = "connection") {
-                SettingsGroup(title = "Conexión") {
-                    WebPanelSetting(webPanelState, onStartWebPanel, onStopWebPanel)
+            item(key = "listening-history") {
+                SettingsGroup(title = "Historial local") {
+                    SettingsToggleRow(
+                        title = "Guardar escuchas",
+                        description = "Registra lo que escuchas solo en este dispositivo. Al pausarlo, se conserva el historial anterior.",
+                        checked = historyEnabled,
+                        onCheckedChange = onHistoryEnabledChange,
+                    )
+                    SettingsDivider()
+                    SettingsRow(
+                        title = "Borrar historial",
+                        description = if (historyHasEntries) "Elimina las escuchas recientes y los conteos guardados."
+                            else "Todavía no hay escuchas guardadas.",
+                        onClick = { confirmClearHistory = true },
+                        trailing = { SettingsChevron() },
+                    )
                 }
             }
 
@@ -278,10 +318,25 @@ internal fun SettingsSheet(
             }
         }
     }
+    if (confirmClearHistory) {
+        AlertDialog(
+            onDismissRequest = { confirmClearHistory = false },
+            title = { Text("¿Borrar historial?") },
+            text = { Text("Se eliminarán todas las escuchas y sus conteos de este dispositivo. No se borrarán canciones ni playlists.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearHistory = false
+                    onClearListeningHistory()
+                }) { Text("Borrar", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClearHistory = false }) { Text("Cancelar") } },
+        )
+    }
+    BackupSettingsDialogs(backupSettings.controller)
 }
 
 @Composable
-private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = title,
@@ -301,7 +356,7 @@ private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> 
 }
 
 @Composable
-private fun SettingsDivider() {
+internal fun SettingsDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(horizontal = 16.dp),
         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f),
@@ -309,12 +364,14 @@ private fun SettingsDivider() {
 }
 
 @Composable
-private fun SettingsRow(
+internal fun SettingsRow(
     title: String,
     modifier: Modifier = Modifier,
     description: String? = null,
     onClick: (() -> Unit)? = null,
     onClickLabel: String? = null,
+    enabled: Boolean = true,
+    leading: (@Composable () -> Unit)? = null,
     trailing: @Composable () -> Unit,
 ) {
     Row(
@@ -322,6 +379,7 @@ private fun SettingsRow(
             .fillMaxWidth()
             .then(
                 if (onClick != null) Modifier.clickable(
+                    enabled = enabled,
                     role = Role.Button,
                     onClickLabel = onClickLabel,
                     onClick = onClick,
@@ -332,6 +390,7 @@ private fun SettingsRow(
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        leading?.invoke()
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -355,11 +414,13 @@ private fun SettingsToggleRow(
     description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    leading: (@Composable () -> Unit)? = null,
 ) {
     SettingsRow(
         title = title,
         description = description,
         modifier = Modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
+        leading = leading,
         trailing = { Switch(checked = checked, onCheckedChange = null) },
     )
 }
@@ -564,7 +625,11 @@ private fun DjSettings(
     if (enabled) {
         SettingsRow(
             title = "Configurar mezcla",
-            description = "${legacyMode.label} · $mixDurationSeconds s",
+            description = if (legacyMode == DjMixMode.Expert) {
+                "${legacyMode.label} · Hasta $mixDurationSeconds s"
+            } else {
+                "${legacyMode.label} · $mixDurationSeconds s"
+            },
             modifier = Modifier.semantics { stateDescription = if (expanded) "Expandido" else "Contraído" },
             onClick = { expanded = !expanded },
             trailing = { SettingsChevron(expanded) },
@@ -575,7 +640,7 @@ private fun DjSettings(
                 selectedValue = legacyMode,
                 options = listOf(
                     SettingsOption(DjMixMode.Classic, "Clásico", "Mezcla durante un tiempo fijo al final de la canción."),
-                    SettingsOption(DjMixMode.Expert, "Experto", "Detecta silencios al inicio y al final. Si el análisis falla, usa el modo clásico."),
+                    SettingsOption(DjMixMode.Expert, "Experto", "Volumen uniforme, cambio de graves y ritmo detectado."),
                 ),
                 onSelect = onMixModeChange,
             )
@@ -583,7 +648,17 @@ private fun DjSettings(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Duración de la mezcla", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (legacyMode == DjMixMode.Expert) "Duración máxima" else "Duración de la mezcla",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (legacyMode == DjMixMode.Expert) {
+                    Text(
+                        "Volumen uniforme y cambio de graves con ayuda del ritmo detectado. La transición dura entre 3 y $mixDurationSeconds s; sin un análisis fiable, usa una mezcla simple.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -617,36 +692,9 @@ private fun DjSettings(
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun WebPanelSetting(state: WebPanelServerState, onStart: () -> Unit, onStop: () -> Unit) {
-    SettingsToggleRow(
-        title = "Panel de escritorio",
-        description = if (state.isRunning) "Activo · Conecta tu PC a la misma red Wi-Fi." else "Controla tu música desde el navegador de tu PC.",
-        checked = state.isRunning,
-        onCheckedChange = { if (it) onStart() else onStop() },
-    )
-    if (state.isRunning) {
-        SettingsDivider()
-        SelectionContainer {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text("Abre este enlace en tu PC", style = MaterialTheme.typography.labelMedium)
-                Text(
-                    text = state.url.orEmpty(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    text = "Token: ${state.token.orEmpty()}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            if (legacyMode == DjMixMode.Expert) {
+                SettingsDivider()
+                ExpertDjPreviewSetting()
             }
         }
     }

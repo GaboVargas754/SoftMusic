@@ -3,26 +3,43 @@ package com.softmusic.app.player
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import com.softmusic.app.backup.BackupDocument
+import com.softmusic.app.backup.BackupPreferences
+import com.softmusic.app.backup.BackupSong
+import com.softmusic.app.backup.BACKUP_PREFERENCE_KEYS
+import com.softmusic.app.backup.MAX_BACKUP_SONGS
+import com.softmusic.app.backup.putBackupPreferences
+import com.softmusic.app.backup.validateBackupDocument
 import com.softmusic.app.data.MusicPlaylist
 import java.util.concurrent.Executors
 import org.json.JSONArray
 import org.json.JSONObject
 
-internal class MusicPersistenceStore(context: Context) {
-    private val favoritesPreferences = context.getSharedPreferences(FAVORITES_PREFS_NAME, Context.MODE_PRIVATE)
-    private val playlistsPreferences = context.getSharedPreferences(PLAYLISTS_PREFS_NAME, Context.MODE_PRIVATE)
-    private val playbackSessionPreferences = context.getSharedPreferences(PLAYBACK_SESSION_PREFS_NAME, Context.MODE_PRIVATE)
-    private val collectionMixPreferences = context.getSharedPreferences(COLLECTION_MIX_PREFS_NAME, Context.MODE_PRIVATE)
+internal class MusicPersistenceStore(
+    private val favoritesPreferences: SharedPreferences,
+    private val playlistsPreferences: SharedPreferences,
+    private val playbackSessionPreferences: SharedPreferences,
+    private val collectionMixPreferences: SharedPreferences,
+) : PlaybackSessionStore {
+    constructor(context: Context) : this(
+        context.getSharedPreferences(FAVORITES_PREFS_NAME, Context.MODE_PRIVATE),
+        context.getSharedPreferences(PLAYLISTS_PREFS_NAME, Context.MODE_PRIVATE),
+        context.getSharedPreferences(PLAYBACK_SESSION_PREFS_NAME, Context.MODE_PRIVATE),
+        context.getSharedPreferences(COLLECTION_MIX_PREFS_NAME, Context.MODE_PRIVATE),
+    )
 
-    fun loadFavoriteSongIds(): Set<Long> = favoritesPreferences
+    fun loadFavoriteSongIds(): Set<Long> = (if (playlistsPreferences.contains(KEY_COLLECTION_FAVORITES)) {
+        playlistsPreferences.getStringSet(KEY_COLLECTION_FAVORITES, emptySet())
+    } else favoritesPreferences
         .getStringSet(KEY_FAVORITE_SONG_IDS, emptySet())
-        .orEmpty()
+    ).orEmpty()
         .mapNotNull { it.toLongOrNull() }
         .toSet()
 
-    fun saveFavoriteSongIds(ids: Set<Long>) {
-        favoritesPreferences.edit()
-            .putStringSet(KEY_FAVORITE_SONG_IDS, ids.map { it.toString() }.toSet())
+    fun saveFavoriteSongIds(ids: Set<Long>, pendingSongs: Map<Long, BackupSong>) {
+        playlistsPreferences.edit()
+            .putStringSet(KEY_COLLECTION_FAVORITES, ids.map { it.toString() }.toSet())
+            .putString(KEY_PENDING_BACKUP_SONGS, pendingSongsJson(pendingSongs))
             .apply()
     }
 
@@ -37,13 +54,87 @@ internal class MusicPersistenceStore(context: Context) {
                     id = item.optString("id"),
                     name = item.optString("name"),
                     songIds = List(songsArray.length()) { songIndex -> songsArray.optLong(songIndex) },
-                    coverSongId = item.optLong("coverSongId").takeIf { it > 0L },
+                    coverSongId = item.optLong("coverSongId").takeIf { it != 0L },
                 )
             }.filter { it.id.isNotBlank() && it.name.isNotBlank() }
         }.getOrDefault(emptyList())
     }
 
-    fun savePlaylists(playlists: List<MusicPlaylist>) {
+    fun savePlaylists(playlists: List<MusicPlaylist>, pendingSongs: Map<Long, BackupSong>) {
+        playlistsPreferences.edit()
+            .putString(KEY_PLAYLISTS, playlistsJson(playlists))
+            .putString(KEY_PENDING_BACKUP_SONGS, pendingSongsJson(pendingSongs))
+            .apply()
+    }
+
+    fun loadPendingBackupSongs(): Map<Long, BackupSong> = runCatching {
+        val raw = playlistsPreferences.getString(KEY_PENDING_BACKUP_SONGS, null)
+            ?: return@runCatching emptyMap()
+        val array = JSONArray(raw)
+        require(array.length() <= MAX_BACKUP_SONGS)
+        val pending = buildMap {
+            repeat(array.length()) { index ->
+                val item = array.getJSONObject(index)
+                val id = item.getLong("id")
+                require(id < 0L && id !in this)
+                put(id, BackupSong(
+                    key = item.getString("key"),
+                    fileName = item.nullableString("fileName"),
+                    title = item.getString("title"),
+                    artist = item.getString("artist"),
+                    album = item.getString("album"),
+                    durationMs = item.nullableLong("durationMs"),
+                    fileSizeBytes = item.nullableLong("fileSizeBytes"),
+                    folderPath = item.nullableString("folderPath"),
+                ))
+            }
+        }
+        validateBackupDocument(BackupDocument(createdAtEpochMs = 0L, appVersion = "pending",
+            songs = pending.values.toList(), playlists = emptyList(), favoriteKeys = emptyList()))
+        pending
+    }.getOrDefault(emptyMap())
+
+    /** One preferences-file commit is the durability boundary for a restore. */
+    fun commitBackupCollections(
+        state: BackupCollectionState,
+        preferences: BackupPreferences?,
+        validFolderPaths: Set<String>,
+    ): Boolean {
+        val keys = setOf(KEY_PLAYLISTS, KEY_COLLECTION_FAVORITES, KEY_PENDING_BACKUP_SONGS) +
+            if (preferences != null) BACKUP_PREFERENCE_KEYS else emptySet()
+        val previousValues = playlistsPreferences.all.filterKeys { it in keys }
+            .mapValues { (_, value) -> if (value is Set<*>) value.toSet() else value }
+        val editor = playlistsPreferences.edit()
+            .putString(KEY_PLAYLISTS, playlistsJson(state.playlists))
+            .putStringSet(KEY_COLLECTION_FAVORITES, state.favoriteSongIds.map { it.toString() }.toSet())
+            .putString(KEY_PENDING_BACKUP_SONGS, pendingSongsJson(state.pendingSongs))
+        if (preferences != null) editor.putBackupPreferences(preferences, validFolderPaths)
+        val saved = runCatching { editor.commit() }.getOrDefault(false)
+        if (!saved) {
+            // SharedPreferences updates its in-memory map even when the disk write fails.
+            // Restore that map too, so a later ordinary write cannot persist a failed import.
+            val rollback = playlistsPreferences.edit()
+            keys.forEach { key -> rollback.restoreValue(key, previousValues[key]) }
+            runCatching { rollback.commit() }.onFailure {
+                Log.w("SoftMusicPersistence", "No se pudo volver a guardar el estado anterior del respaldo", it)
+            }
+        }
+        return saved
+    }
+
+    private fun SharedPreferences.Editor.restoreValue(key: String, value: Any?) {
+        when (value) {
+            null -> remove(key)
+            is String -> putString(key, value)
+            is Boolean -> putBoolean(key, value)
+            is Float -> putFloat(key, value)
+            is Int -> putInt(key, value)
+            is Long -> putLong(key, value)
+            is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
+        }
+    }
+
+    private fun playlistsJson(playlists: List<MusicPlaylist>): String {
         val array = JSONArray()
         playlists.forEach { playlist ->
             val songIds = JSONArray()
@@ -56,10 +147,22 @@ internal class MusicPersistenceStore(context: Context) {
                     .put("coverSongId", playlist.coverSongId ?: 0L),
             )
         }
-        playlistsPreferences.edit()
-            .putString(KEY_PLAYLISTS, array.toString())
-            .apply()
+        return array.toString()
     }
+
+    private fun pendingSongsJson(pendingSongs: Map<Long, BackupSong>): String = JSONArray().apply {
+        pendingSongs.forEach { (id, song) ->
+            put(JSONObject().put("id", id).put("key", song.key)
+                .put("fileName", song.fileName ?: JSONObject.NULL)
+                .put("title", song.title).put("artist", song.artist).put("album", song.album)
+                .put("durationMs", song.durationMs ?: JSONObject.NULL)
+                .put("fileSizeBytes", song.fileSizeBytes ?: JSONObject.NULL)
+                .put("folderPath", song.folderPath ?: JSONObject.NULL))
+        }
+    }.toString()
+
+    private fun JSONObject.nullableString(key: String): String? = if (isNull(key)) null else getString(key)
+    private fun JSONObject.nullableLong(key: String): Long? = if (isNull(key)) null else getLong(key)
 
     fun loadCollectionMixes(): Map<String, CollectionMixConfig> = runCatching {
         val raw = collectionMixPreferences.getString(KEY_COLLECTION_MIXES, null)
@@ -126,7 +229,7 @@ internal class MusicPersistenceStore(context: Context) {
         collectionMixPreferences.edit().putString(KEY_COLLECTION_MIXES, document.toString()).apply()
     }
 
-    fun loadPlaybackSession(): PlaybackSessionSnapshot? {
+    override fun loadPlaybackSession(): PlaybackSessionSnapshot? {
         synchronized(playbackSessionLock) {
             if (playbackSessionKnown) return requestedPlaybackSession
         }
@@ -153,7 +256,7 @@ internal class MusicPersistenceStore(context: Context) {
         }
     }
 
-    fun savePlaybackSession(session: PlaybackSessionSnapshot) {
+    override fun savePlaybackSession(session: PlaybackSessionSnapshot) {
         synchronized(playbackSessionLock) {
             requestedPlaybackSession = session
             playbackSessionKnown = true
@@ -161,7 +264,7 @@ internal class MusicPersistenceStore(context: Context) {
         }
     }
 
-    fun clearPlaybackSession() {
+    override fun clearPlaybackSession() {
         synchronized(playbackSessionLock) {
             requestedPlaybackSession = null
             playbackSessionKnown = true
@@ -262,6 +365,8 @@ internal class MusicPersistenceStore(context: Context) {
         const val KEY_FAVORITE_SONG_IDS = "favorite_song_ids"
         const val PLAYLISTS_PREFS_NAME = "playlist_settings"
         const val KEY_PLAYLISTS = "playlists"
+        const val KEY_COLLECTION_FAVORITES = "collection_favorite_song_ids"
+        const val KEY_PENDING_BACKUP_SONGS = "pending_backup_songs"
         const val PLAYBACK_SESSION_PREFS_NAME = "playback_session_settings"
         const val KEY_PLAYBACK_SESSION = "playback_session"
         const val COLLECTION_MIX_PREFS_NAME = "collection_mix_settings"
@@ -269,12 +374,3 @@ internal class MusicPersistenceStore(context: Context) {
         const val COLLECTION_MIX_VERSION = 1
     }
 }
-
-internal data class PlaybackSessionSnapshot(
-    val queueIds: List<Long>,
-    val currentSongId: Long,
-    val positionMs: Long,
-    val playbackMode: PlaybackMode?,
-    val source: PlaybackQueueSource = PlaybackQueueSource.Songs,
-    val sourceKey: String? = null,
-)

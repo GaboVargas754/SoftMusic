@@ -49,6 +49,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -139,7 +140,7 @@ internal fun LocalLibraryScreen(
     var searchVisible by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var showCreatePlaylist by rememberSaveable { mutableStateOf(false) }
-    var lastAppliedRequestId by rememberSaveable { mutableStateOf(0L) }
+    var lastAppliedRequestId by rememberSaveable { mutableLongStateOf(0L) }
     val listState = rememberLazyListState()
     val selectedFilter = LibraryCollectionFilter.entries.firstOrNull {
         it.name == selectedFilterName

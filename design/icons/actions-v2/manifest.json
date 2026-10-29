@@ -1,0 +1,434 @@
+[
+  {
+    "id": "rename",
+    "label": "Renombrar",
+    "group": "Edición y playlists",
+    "paths": [
+      "M3 17v4h10M4 13l10-10 4 4L8 17H4ZM11 6l4 4M19 12v10M16 12h6M16 22h6"
+    ]
+  },
+  {
+    "id": "edit-metadata",
+    "label": "Editar información",
+    "group": "Edición y playlists",
+    "paths": [
+      "M5 3h13q2 0 2 2v14q0 2 -2 2h-13q-2 0 -2 -2v-14q0 -2 2 -2Z",
+      "M7 7h9M7 11h5M14 17l5-5 3 3-5 5h-3Z"
+    ]
+  },
+  {
+    "id": "add-song",
+    "label": "Agregar canción",
+    "group": "Edición y playlists",
+    "paths": [
+      "M8 17V5l9-2v8M8 8l9-2",
+      "M2 17a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+      "M18 14v8M14 18h8"
+    ]
+  },
+  {
+    "id": "add-many-songs",
+    "label": "Agregar canciones",
+    "group": "Edición y playlists",
+    "paths": [
+      "M4 6h8M4 10h7M4 14h3M12 18V9l7-2v5",
+      "M7.0 18a2.5 2.5 0 1 0 5.0 0a2.5 2.5 0 1 0 -5.0 0",
+      "M19 15v7M15.5 18.5h7"
+    ]
+  },
+  {
+    "id": "add-to-playlist",
+    "label": "Añadir a playlist",
+    "group": "Edición y playlists",
+    "paths": [
+      "M3 5h13M3 10h13M3 15h6M3 20h6M17 14v8M13 18h8"
+    ]
+  },
+  {
+    "id": "remove-from-playlist",
+    "label": "Quitar de playlist",
+    "group": "Edición y playlists",
+    "paths": [
+      "M3 5h13M3 10h13M3 15h6M3 20h6M13 18h8"
+    ]
+  },
+  {
+    "id": "new-playlist",
+    "label": "Nueva playlist",
+    "group": "Edición y playlists",
+    "paths": [
+      "M3 5h9M3 10h9M3 15h5M3 20h5M17 3v8M13 7h8M15 19v-6l6-2v6",
+      "M10.0 19a2.5 2.5 0 1 0 5.0 0a2.5 2.5 0 1 0 -5.0 0",
+      "M16.0 17a2.5 2.5 0 1 0 5.0 0a2.5 2.5 0 1 0 -5.0 0"
+    ]
+  },
+  {
+    "id": "duplicate-playlist",
+    "label": "Duplicar playlist",
+    "group": "Edición y playlists",
+    "paths": [
+      "M9 7h10q2 0 2 2v10q0 2 -2 2h-10q-2 0 -2 -2v-10q0 -2 2 -2Z",
+      "M17 7V3H3v14h4M11 11h6M11 15h6M11 18h3"
+    ]
+  },
+  {
+    "id": "merge-playlists",
+    "label": "Unir playlists",
+    "group": "Edición y playlists",
+    "paths": [
+      "M3 4h6M3 8h5M15 4h6M16 8h5M6 12l6 5 6-5M12 17v5M9 19h6"
+    ]
+  },
+  {
+    "id": "change-cover",
+    "label": "Cambiar portada",
+    "group": "Edición y playlists",
+    "paths": [
+      "M5 3h14q2 0 2 2v14q0 2 -2 2h-14q-2 0 -2 -2v-14q0 -2 2 -2Z",
+      "M6 8a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+      "M3 17l6-6 5 5M13 15l3-3 5 5"
+    ]
+  },
+  {
+    "id": "pin-playlist",
+    "label": "Fijar playlist",
+    "group": "Edición y playlists",
+    "paths": [
+      "M3 5h7M3 10h7M3 15h5M14 3h6l-1 6 3 4h-5v8M17 13h-5l3-4Z"
+    ]
+  },
+  {
+    "id": "delete-playlist",
+    "label": "Eliminar playlist",
+    "group": "Edición y playlists",
+    "paths": [
+      "M3 5h8M3 10h8M3 15h5M13 9h9M15 9V6h5v3M14 9l1 12h5l1-12M17.5 12v6"
+    ]
+  },
+  {
+    "id": "select-item",
+    "label": "Seleccionar",
+    "group": "Selección",
+    "paths": [
+      "M7 4h10q3 0 3 3v10q0 3 -3 3h-10q-3 0 -3 -3v-10q0 -3 3 -3Z",
+      "M8 12l3 3 5-6"
+    ]
+  },
+  {
+    "id": "selection-mode",
+    "label": "Modo selección",
+    "group": "Selección",
+    "paths": [
+      "M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5M8 12l3 3 6-7"
+    ]
+  },
+  {
+    "id": "select-all",
+    "label": "Seleccionar todo",
+    "group": "Selección",
+    "paths": [
+      "M9 7h10q2 0 2 2v10q0 2 -2 2h-10q-2 0 -2 -2v-10q0 -2 2 -2Z",
+      "M16 3H5q-2 0-2 2v11M10 14l3 3 5-6"
+    ]
+  },
+  {
+    "id": "deselect-all",
+    "label": "Deseleccionar todo",
+    "group": "Selección",
+    "paths": [
+      "M9 7h10q2 0 2 2v10q0 2 -2 2h-10q-2 0 -2 -2v-10q0 -2 2 -2Z",
+      "M16 3H5q-2 0-2 2v11M11 11l6 6M17 11l-6 6"
+    ]
+  },
+  {
+    "id": "invert-selection",
+    "label": "Invertir selección",
+    "group": "Selección",
+    "paths": [
+      "M4 7h5q1 0 1 1v8q0 1 -1 1h-5q-1 0 -1 -1v-8q0 -1 1 -1Z",
+      "M15 7h5q1 0 1 1v8q0 1 -1 1h-5q-1 0 -1 -1v-8q0 -1 1 -1Z",
+      "M5 12l1 1 2-3M6 4h12m-2-2 2 2-2 2M18 20H6m2-2-2 2 2 2"
+    ]
+  },
+  {
+    "id": "select-range",
+    "label": "Seleccionar rango",
+    "group": "Selección",
+    "paths": [
+      "M4 4h3v16H4M17 4h3v16h-3M10 6h4M10 12h4M10 18h4"
+    ]
+  },
+  {
+    "id": "select-songs",
+    "label": "Seleccionar canciones",
+    "group": "Selección",
+    "paths": [
+      "M11 14V5l9-2v11M11 8l9-2",
+      "M15.0 14a2.5 2.5 0 1 0 5.0 0a2.5 2.5 0 1 0 -5.0 0",
+      "M4 13h6q2 0 2 2v5q0 2 -2 2h-6q-2 0 -2 -2v-5q0 -2 2 -2Z",
+      "M4.5 17.5l2 2 3-4"
+    ]
+  },
+  {
+    "id": "selected-count",
+    "label": "Elementos seleccionados",
+    "group": "Selección",
+    "paths": [
+      "M11 4h10M11 10h10M11 16h6M3 4l2 2 3-4M3 10l2 2 3-4",
+      "M2 18a4 4 0 1 0 8 0a4 4 0 1 0 -8 0",
+      "M4 18h4"
+    ]
+  },
+  {
+    "id": "sort-menu",
+    "label": "Ordenar",
+    "group": "Ordenamiento",
+    "paths": [
+      "M3 5h12M3 10h9M3 15h6M18 5v15m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-title-az",
+    "label": "Título A–Z",
+    "group": "Ordenamiento",
+    "paths": [
+      "M3 9l3-7 3 7M4 7h4M3 14h6l-6 7h6M17 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-title-za",
+    "label": "Título Z–A",
+    "group": "Ordenamiento",
+    "paths": [
+      "M3 2h6L3 9h6M3 21l3-7 3 7M4 19h4M17 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-artist",
+    "label": "Ordenar por artista",
+    "group": "Ordenamiento",
+    "paths": [
+      "M5 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+      "M2 17v-2a6 6 0 0 1 12 0v2M18 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-album",
+    "label": "Ordenar por álbum",
+    "group": "Ordenamiento",
+    "paths": [
+      "M4 4h8q2 0 2 2v12q0 2 -2 2h-8q-2 0 -2 -2v-12q0 -2 2 -2Z",
+      "M4 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0",
+      "M7.4 12a0.6 0.6 0 1 0 1.2 0a0.6 0.6 0 1 0 -1.2 0",
+      "M19 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-duration",
+    "label": "Ordenar por duración",
+    "group": "Ordenamiento",
+    "paths": [
+      "M2 12a6 6 0 1 0 12 0a6 6 0 1 0 -12 0",
+      "M8 8v4l3 2M19 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-added",
+    "label": "Fecha de agregado",
+    "group": "Ordenamiento",
+    "paths": [
+      "M4 5h8q2 0 2 2v11q0 2 -2 2h-8q-2 0 -2 -2v-11q0 -2 2 -2Z",
+      "M5 2v5M11 2v5M2 10h12M6 14h4M8 12v4M19 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-modified",
+    "label": "Fecha de modificación",
+    "group": "Ordenamiento",
+    "paths": [
+      "M4 5h8q2 0 2 2v11q0 2 -2 2h-8q-2 0 -2 -2v-11q0 -2 2 -2Z",
+      "M5 2v5M11 2v5M2 10h12M5 14l2 2 4-4M19 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-track-number",
+    "label": "Número de pista",
+    "group": "Ordenamiento",
+    "paths": [
+      "M5 3 3 21M11 3 9 21M2 9h11M1 15h11M19 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-file-name",
+    "label": "Nombre de archivo",
+    "group": "Ordenamiento",
+    "paths": [
+      "M3 2h7l4 4v15H3ZM10 2v5h4M6 12h5M6 16h5M19 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-size",
+    "label": "Ordenar por tamaño",
+    "group": "Ordenamiento",
+    "paths": [
+      "M3 12h2q1 0 1 1v6q0 1 -1 1h-2q-1 0 -1 -1v-6q0 -1 1 -1Z",
+      "M10 7h2q1 0 1 1v11q0 1 -1 1h-2q-1 0 -1 -1v-11q0 -1 1 -1Z",
+      "M19 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-ascending",
+    "label": "Orden ascendente",
+    "group": "Ordenamiento",
+    "paths": [
+      "M3 6h4M3 12h7M3 18h10M19 21V3m-3 3 3-3 3 3"
+    ]
+  },
+  {
+    "id": "sort-descending",
+    "label": "Orden descendente",
+    "group": "Ordenamiento",
+    "paths": [
+      "M3 6h10M3 12h7M3 18h4M19 3v18m-3-3 3 3 3-3"
+    ]
+  },
+  {
+    "id": "sort-custom",
+    "label": "Orden manual",
+    "group": "Ordenamiento",
+    "paths": [
+      "M3 5h11M3 12h11M3 19h11M19 3v18m-2-16 2-2 2 2m-4 14 2 2 2-2"
+    ]
+  },
+  {
+    "id": "reset-order",
+    "label": "Restablecer orden",
+    "group": "Ordenamiento",
+    "paths": [
+      "M8 7h12M10 12h10M10 17h10M7 3 3 7l4 4M3 7v8a5 5 0 0 0 5 5"
+    ]
+  },
+  {
+    "id": "move-up",
+    "label": "Subir canción",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 5h6M3 12h6M3 19h6M17 20V4m-5 5 5-5 5 5"
+    ]
+  },
+  {
+    "id": "move-down",
+    "label": "Bajar canción",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 5h6M3 12h6M3 19h6M17 4v16m-5-5 5 5 5-5"
+    ]
+  },
+  {
+    "id": "move-to-top",
+    "label": "Mover al inicio",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 3h18M12 21V8m-6 6 6-6 6 6"
+    ]
+  },
+  {
+    "id": "move-to-bottom",
+    "label": "Mover al final",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 21h18M12 3v13m-6-6 6 6 6-6"
+    ]
+  },
+  {
+    "id": "drag-reorder",
+    "label": "Arrastrar para ordenar",
+    "group": "Organización y acciones",
+    "paths": [
+      "M7.1 5a0.9 0.9 0 1 0 1.8 0a0.9 0.9 0 1 0 -1.8 0",
+      "M7.1 12a0.9 0.9 0 1 0 1.8 0a0.9 0.9 0 1 0 -1.8 0",
+      "M7.1 19a0.9 0.9 0 1 0 1.8 0a0.9 0.9 0 1 0 -1.8 0",
+      "M15.1 5a0.9 0.9 0 1 0 1.8 0a0.9 0.9 0 1 0 -1.8 0",
+      "M15.1 12a0.9 0.9 0 1 0 1.8 0a0.9 0.9 0 1 0 -1.8 0",
+      "M15.1 19a0.9 0.9 0 1 0 1.8 0a0.9 0.9 0 1 0 -1.8 0"
+    ]
+  },
+  {
+    "id": "move-to-playlist",
+    "label": "Mover a otra playlist",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 5h10M3 10h10M3 15h5M12 17h10m-4-4 4 4-4 4"
+    ]
+  },
+  {
+    "id": "add-to-queue",
+    "label": "Agregar a la cola",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 5h17M3 10h17M3 15h7M3 20h7M17 14v8M13 18h8"
+    ]
+  },
+  {
+    "id": "clear-queue",
+    "label": "Vaciar cola",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 5h17M3 10h17M3 15h7M3 20h7M14 15l7 7M21 15l-7 7"
+    ]
+  },
+  {
+    "id": "remove-duplicates",
+    "label": "Quitar duplicados",
+    "group": "Organización y acciones",
+    "paths": [
+      "M5 3h8q2 0 2 2v8q0 2 -2 2h-8q-2 0 -2 -2v-8q0 -2 2 -2Z",
+      "M9 15v6h12V9h-6M12 18l6-6"
+    ]
+  },
+  {
+    "id": "locate-file",
+    "label": "Mostrar archivo",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 8V5h6l3 3h9v12H3Z",
+      "M9 13a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+      "M14.5 15.5l3 3"
+    ]
+  },
+  {
+    "id": "song-details",
+    "label": "Detalles de canción",
+    "group": "Organización y acciones",
+    "paths": [
+      "M10 13V5l9-2v7",
+      "M4 13a3 3 0 1 0 6 0a3 3 0 1 0 -6 0",
+      "M12 17a5 5 0 1 0 10 0a5 5 0 1 0 -10 0",
+      "M17 16v4M17 14h.01"
+    ]
+  },
+  {
+    "id": "save-changes",
+    "label": "Guardar cambios",
+    "group": "Organización y acciones",
+    "paths": [
+      "M3 3h15l3 3v15H3ZM7 3v6h10V3M7 21v-8h10v8"
+    ]
+  },
+  {
+    "id": "undo",
+    "label": "Deshacer",
+    "group": "Organización y acciones",
+    "paths": [
+      "M8 4 3 9l5 5M3 9h11a7 7 0 0 1 0 14"
+    ]
+  },
+  {
+    "id": "redo",
+    "label": "Rehacer",
+    "group": "Organización y acciones",
+    "paths": [
+      "M16 4l5 5-5 5M21 9H10a7 7 0 0 0 0 14"
+    ]
+  }
+]

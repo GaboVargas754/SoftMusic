@@ -2,9 +2,4 @@
 <resources>
     <string name="app_name">SoftMusic</string>
     <string name="notification_channel_media_playback">Reproducción de música</string>
-    <string name="notification_channel_web_panel">Panel web local</string>
-    <string name="notification_web_panel_title">Panel web de SoftMusic</string>
-    <string name="notification_web_panel_running">Panel local activo</string>
-    <string name="notification_web_panel_text">Abre %1$s en tu PC</string>
-    <string name="notification_web_panel_stop">Detener</string>
 </resources>

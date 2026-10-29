@@ -46,20 +46,19 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.softmusic.app.data.MusicPlaylist
 import com.softmusic.app.data.Song
+import com.softmusic.app.player.PlaybackMode
 import com.softmusic.app.player.PlaybackProgressState
 import com.softmusic.app.player.PlayerUiState
 import com.softmusic.app.player.SortMode
+import com.softmusic.app.player.orderedSongs
 import kotlinx.coroutines.flow.StateFlow
 
 private data class HomePlaylist(
@@ -92,10 +91,13 @@ internal fun HomeScreen(
     onPrevious: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onNext: () -> Unit,
+    onPlaybackModeChange: (PlaybackMode) -> Unit,
     onDismissSession: () -> Unit,
     onOpenLibrary: () -> Unit,
     onRefreshLibrary: () -> Unit,
     onCreatePlaylist: (String) -> Boolean,
+    onOpenHistory: (ListeningHistoryView) -> Unit,
+    onPlayHistorySong: (Song, List<Song>, ListeningHistoryView) -> Unit,
 ) {
     var showCreatePlaylist by rememberSaveable { mutableStateOf(false) }
     val librarySongs = remember(uiState.songs, uiState.hiddenFolderPaths, uiState.excludeSmallAudios) {
@@ -103,6 +105,12 @@ internal fun HomeScreen(
     }
     val favorites = remember(librarySongs, uiState.favoriteSongIds) {
         librarySongs.filter { it.id in uiState.favoriteSongIds }
+    }
+    val recentHistory = remember(librarySongs, uiState.listeningHistory.entries) {
+        uiState.listeningHistory.orderedSongs(librarySongs, ListeningHistoryView.Recent.key)
+    }
+    val mostPlayedHistory = remember(librarySongs, uiState.listeningHistory.entries) {
+        uiState.listeningHistory.orderedSongs(librarySongs, ListeningHistoryView.MostPlayed.key)
     }
     val recentAlbums = remember(librarySongs) {
         librarySongs.toMusicGroups(MusicLibraryView.Albums, SortMode.Recent)
@@ -149,7 +157,16 @@ internal fun HomeScreen(
             ) {
                 item(key = "home-header", contentType = "header") {
                     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                        HomeHeader(onOpenMenu = onOpenMenu)
+                        HomeBrandHeader(
+                            shuffleActive = uiState.playbackMode == PlaybackMode.Shuffle,
+                            onToggleShuffle = {
+                                onPlaybackModeChange(
+                                    if (uiState.playbackMode == PlaybackMode.Shuffle) PlaybackMode.Ordered
+                                    else PlaybackMode.Shuffle,
+                                )
+                            },
+                            onOpenMenu = onOpenMenu,
+                        )
                         HomePrimaryCards(
                             favoriteCount = favorites.size,
                             songCount = uiState.visibleSongs.size,
@@ -165,6 +182,26 @@ internal fun HomeScreen(
                             onRefreshLibrary = onRefreshLibrary,
                             onOpenLibrary = onOpenLibrary,
                         )
+                    }
+                }
+                uiState.currentSong?.let { song ->
+                    item(key = "home-current-song", contentType = "current-song") {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            HomeSectionTitle(title = "Seguir escuchando")
+                            HomeListeningCard(
+                                song = song,
+                                isPlaying = uiState.isPlaying,
+                                restoredSessionAvailable = uiState.restoredSessionAvailable,
+                                playbackProgressState = playbackProgressState,
+                                progressUpdatesEnabled = progressUpdatesEnabled && !showCreatePlaylist,
+                                onOpenPlayer = onOpenPlayer,
+                                onPrevious = onPrevious,
+                                onTogglePlayPause = onTogglePlayPause,
+                                onNext = onNext,
+                                onDismissSession = onDismissSession,
+                                modifier = Modifier.padding(horizontal = 16.dp),
+                            )
+                        }
                     }
                 }
                 if (recentAlbums.isNotEmpty()) {
@@ -190,26 +227,6 @@ internal fun HomeScreen(
                                     )
                                 }
                             }
-                        }
-                    }
-                }
-                uiState.currentSong?.let { song ->
-                    item(key = "home-current-song", contentType = "current-song") {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            HomeSectionTitle(title = "Seguir escuchando")
-                            HomeListeningCard(
-                                song = song,
-                                isPlaying = uiState.isPlaying,
-                                restoredSessionAvailable = uiState.restoredSessionAvailable,
-                                playbackProgressState = playbackProgressState,
-                                progressUpdatesEnabled = progressUpdatesEnabled && !showCreatePlaylist,
-                                onOpenPlayer = onOpenPlayer,
-                                onPrevious = onPrevious,
-                                onTogglePlayPause = onTogglePlayPause,
-                                onNext = onNext,
-                                onDismissSession = onDismissSession,
-                                modifier = Modifier.padding(horizontal = 16.dp),
-                            )
                         }
                     }
                 }
@@ -243,6 +260,24 @@ internal fun HomeScreen(
                         }
                     }
                 }
+                if (recentHistory.isNotEmpty()) {
+                    item(key = "home-recent-history", contentType = "history") {
+                        ListeningHistoryHomeSection(recentHistory, ListeningHistoryView.Recent, onOpenHistory, onPlayHistorySong)
+                    }
+                    item(key = "home-most-played-history", contentType = "history") {
+                        ListeningHistoryHomeSection(mostPlayedHistory, ListeningHistoryView.MostPlayed, onOpenHistory, onPlayHistorySong)
+                    }
+                } else if (librarySongs.isNotEmpty() && !uiState.listeningHistory.isLoading) {
+                    item(key = "home-history-invitation", contentType = "history") {
+                        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                            Text("Tu historial", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text(if (uiState.listeningHistory.enabled) "Aquí aparecerá la música que escuches en este dispositivo."
+                                else "El historial está pausado. Puedes activarlo en Ajustes.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TextButton(onClick = { onOpenHistory(ListeningHistoryView.Recent) }) { Text("Ver historial") }
+                        }
+                    }
+                }
             }
         }
     }
@@ -252,33 +287,6 @@ internal fun HomeScreen(
             onCreatePlaylist = onCreatePlaylist,
             onDismiss = { showCreatePlaylist = false },
         )
-    }
-}
-
-@Composable
-private fun HomeHeader(onOpenMenu: () -> Unit) {
-    val wordmark = remember {
-        buildAnnotatedString {
-            withStyle(SpanStyle(color = Color(0xFFF7F8FB))) { append("Soft") }
-            withStyle(SpanStyle(color = Color(0xFF1FE6D6))) { append("Music") }
-        }
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = wordmark,
-            modifier = Modifier.weight(1f).semantics { heading() },
-            color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 30.sp,
-            lineHeight = 36.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        HomeMenuButton(onClick = onOpenMenu)
     }
 }
 

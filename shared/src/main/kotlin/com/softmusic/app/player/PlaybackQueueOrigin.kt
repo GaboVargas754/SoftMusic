@@ -19,6 +19,11 @@ fun PlayerUiState.playbackQueueOriginLabel(): String {
             ?.name?.takeIf { it.isNotBlank() } ?: "Playlist"
         PlaybackQueueSource.Artist -> sourceKey ?: "Artista"
         PlaybackQueueSource.Album -> sourceKey ?: "Álbum"
+        PlaybackQueueSource.History -> when (sourceKey) {
+            "most_played" -> "Más reproducidas"
+            "recent" -> "Escuchadas recientemente"
+            else -> "Historial"
+        }
         PlaybackQueueSource.Songs -> {
             if (sourceKey == null) return "Biblioteca local"
             allFolders.firstOrNull { it.path == sourceKey }?.name?.takeIf { it.isNotBlank() }

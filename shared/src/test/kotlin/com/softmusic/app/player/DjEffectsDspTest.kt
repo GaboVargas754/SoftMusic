@@ -15,6 +15,39 @@ import kotlin.test.assertTrue
 
 class DjEffectsDspTest {
     @Test
+    fun `level attenuation ramps without steps and survives transition effect reset`() {
+        val dsp = DjEffectsDsp(48_000, 1)
+        dsp.setLevelGain(0.4f)
+        val ramp = process(dsp, ShortArray(48_000) { 12_000 })
+        assertTrue(ramp.first() > 11_990)
+        assertTrue(abs(ramp.last().toInt() - 4_800) <= 1)
+        assertTrue((1 until ramp.size).all { ramp[it] <= ramp[it-1] && ramp[it-1] - ramp[it] <= 2 })
+        dsp.setTransition(AutoDjEffect.BassSwap, 0.5f, 0.65f, 120f, incoming = true)
+        process(dsp, ShortArray(4_800) { 12_000 })
+        dsp.requestReset()
+        val afterReset = process(dsp, ShortArray(4_800) { 12_000 })
+        assertTrue(abs(afterReset.last().toInt() - 4_800) <= 1)
+        dsp.setLevelGain(1f)
+        val restored = process(dsp, ShortArray(48_000) { 12_000 })
+        assertEquals(12_000, restored.last().toInt())
+    }
+
+    @Test
+    fun `normalization never boosts and initializes stereo gains equally`() {
+        val exact = ShortArray(65_536) { (it - 32_768).toShort() }
+        for (gain in listOf(2f, Float.NaN, Float.POSITIVE_INFINITY)) {
+            val dsp = DjEffectsDsp(48_000, 2)
+            dsp.setLevelGain(gain, immediate = true)
+            assertContentEquals(exact, process(dsp, exact))
+        }
+        val dsp = DjEffectsDsp(48_000, 2)
+        dsp.setLevelGain(-3f, immediate = true)
+        val stereo = process(dsp, ShortArray(9_600) { if (it % 2 == 0) 10_000 else -10_000 })
+        assertTrue(stereo.indices.all { abs(stereo[it].toInt() - if (it % 2 == 0) 4_000 else -4_000) <= 1 })
+        dsp.reset()
+        assertContentEquals(exact, process(dsp, exact))
+    }
+    @Test
     fun `three band EQ is audible by band and resets smoothly to bit exact dry`() {
         fun withEq(frequency: Double, eq: MixEq): Double {
             val dsp = DjEffectsDsp(48_000, 1).also { it.setDeckEq(eq) }

@@ -29,6 +29,9 @@ class DjEffectsDsp(val sampleRate: Int, val channelCount: Int) {
     )
 
     private val rampStep = 1f / (sampleRate * CONTROL_RAMP_SECONDS)
+    private val levelRampStep = 1f / (sampleRate * 0.75f)
+    private var levelGain = 1f
+    private var targetLevelGain = 1f
     private val bassAlpha = lowPassAlpha(180f)
     private val bassState = FloatArray(channelCount)
     private val sweepState = FloatArray(channelCount)
@@ -82,6 +85,12 @@ class DjEffectsDsp(val sampleRate: Int, val channelCount: Int) {
         updateTargets()
     }
 
+    /** Stable per-song attenuation, independent of temporary transition effects. Never boosts. */
+    fun setLevelGain(value: Float, immediate: Boolean = false) {
+        targetLevelGain = if (value.isFinite()) value.coerceIn(0.4f, 1f) else 1f
+        if (immediate) levelGain = targetLevelGain
+    }
+
     /** Three complementary bands, with 250 Hz and 4 kHz crossovers and smooth gain changes. */
     fun setDeckEq(value: MixEq) {
         eq = value.sanitized()
@@ -101,6 +110,8 @@ class DjEffectsDsp(val sampleRate: Int, val channelCount: Int) {
     fun reset() {
         parameters = Parameters()
         eq = MixEq()
+        levelGain = 1f
+        targetLevelGain = 1f
         lowGain = 1f
         midGain = 1f
         highGain = 1f
@@ -166,7 +177,7 @@ class DjEffectsDsp(val sampleRate: Int, val channelCount: Int) {
                         dry * (1f - echoFeedback) + delayed * echoFeedback
                 }
 
-                val result = if (!audible) {
+                val result = if (!audible && levelGain == 1f) {
                     sample
                 } else {
                     var wet = dry - bassAmount * bassState[channel]
@@ -181,7 +192,7 @@ class DjEffectsDsp(val sampleRate: Int, val channelCount: Int) {
                         val upper = eqUpperState[channel]
                         wet = low * lowGain + (upper - low) * midGain + (wet - upper) * highGain
                     }
-                    (softLimit(wet) * 32768f).roundToInt().coerceIn(-32768, 32767).toShort()
+                    (softLimit(wet * levelGain) * 32768f).roundToInt().coerceIn(-32768, 32767).toShort()
                 }
                 output.put(result.toByte())
                 output.put((result.toInt() shr 8).toByte())
@@ -237,6 +248,11 @@ class DjEffectsDsp(val sampleRate: Int, val channelCount: Int) {
     }
 
     private fun advanceControls() {
+        levelGain = when {
+            levelGain < targetLevelGain -> (levelGain + levelRampStep).coerceAtMost(targetLevelGain)
+            levelGain > targetLevelGain -> (levelGain - levelRampStep).coerceAtLeast(targetLevelGain)
+            else -> levelGain
+        }
         bassAmount = approach(bassAmount, targetBassAmount)
         sweepAmount = approach(sweepAmount, targetSweepAmount)
         echoAmount = approach(echoAmount, targetEchoAmount)
@@ -259,6 +275,7 @@ class DjEffectsDsp(val sampleRate: Int, val channelCount: Int) {
     }
 
     private fun isFullyBypassed(): Boolean =
+        levelGain == 1f && targetLevelGain == 1f &&
         bassAmount == 0f && sweepAmount == 0f && echoAmount == 0f && !echoRecording && eqIsFlat() &&
             targetLowGain == 1f && targetMidGain == 1f && targetHighGain == 1f &&
             (parameters.effect == AutoDjEffect.None || parameters.intensity == 0f ||

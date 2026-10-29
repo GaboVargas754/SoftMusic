@@ -31,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import com.softmusic.app.BuildConfig
-import com.softmusic.app.R
 import com.softmusic.app.update.AppUpdateInfo
 
 @Composable
@@ -52,7 +51,7 @@ internal fun AppUpdateDialog(
         tonalElevation = 0.dp,
         icon = {
             Image(
-                painter = painterResource(R.drawable.favicon),
+                painter = painterResource(LocalSeasonalIcon.current),
                 contentDescription = null,
                 modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)),
             )

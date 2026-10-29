@@ -6,4 +6,5 @@ enum class PlaybackQueueSource {
     Album,
     Favorites,
     Playlist,
+    History,
 }

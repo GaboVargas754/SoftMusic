@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="listening_history.db" />
+        <exclude domain="database" path="listening_history.db-journal" />
+        <exclude domain="database" path="listening_history.db-wal" />
+        <exclude domain="database" path="listening_history.db-shm" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="listening_history.db" />
+        <exclude domain="database" path="listening_history.db-journal" />
+        <exclude domain="database" path="listening_history.db-wal" />
+        <exclude domain="database" path="listening_history.db-shm" />
+    </device-transfer>
+</data-extraction-rules>

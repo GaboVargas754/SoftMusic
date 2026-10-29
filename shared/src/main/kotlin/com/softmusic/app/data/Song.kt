@@ -12,6 +12,7 @@ data class Song(
     val folderName: String,
     val uri: String,
     val artworkUri: String?,
+    val fileName: String = "",
 )
 
 const val SMALL_AUDIO_MIN_DURATION_MS = 30_000L

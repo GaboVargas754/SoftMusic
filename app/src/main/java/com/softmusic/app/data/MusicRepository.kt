@@ -3,12 +3,33 @@ package com.softmusic.app.data
 import android.content.ContentUris
 import android.content.Context
 import android.os.Build
+import android.os.CancellationSignal
 import android.provider.MediaStore
 import androidx.core.database.getLongOrNull
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class MusicRepository {
-    fun loadSongs(context: Context): List<Song> {
+    suspend fun loadSongs(context: Context): List<Song> = withContext(Dispatchers.IO) {
+        suspendCancellableCoroutine { continuation ->
+            val cancellation = CancellationSignal()
+            continuation.invokeOnCancellation { cancellation.cancel() }
+            try {
+                val songs = querySongs(context, cancellation) { continuation.context.ensureActive() }
+                continuation.resume(songs)
+            } catch (failure: Throwable) {
+                continuation.resumeWithException(failure)
+            }
+        }
+    }
+
+    private fun querySongs(context: Context, cancellation: CancellationSignal, ensureActive: () -> Unit): List<Song> {
+        ensureActive()
         val resolver = context.contentResolver
         val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
@@ -26,6 +47,7 @@ class MusicRepository {
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.DISPLAY_NAME,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
@@ -42,9 +64,11 @@ class MusicRepository {
             "${MediaStore.Audio.Media.IS_MUSIC} != 0",
             null,
             "${MediaStore.Audio.Media.DATE_ADDED} DESC",
+            cancellation,
         )?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val titleColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+            val fileNameColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
             val artistColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
             val albumColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
@@ -54,6 +78,7 @@ class MusicRepository {
             val folderColumn = cursor.getColumnIndex(folderColumnName)
 
             while (cursor.moveToNext()) {
+                ensureActive()
                 val id = cursor.getLong(idColumn)
                 val albumId = cursor.getLongOrNull(albumIdColumn)
                 val contentUri = ContentUris.withAppendedId(collection, id)
@@ -74,10 +99,12 @@ class MusicRepository {
                     folderName = folder.name,
                     uri = contentUri.toString(),
                     artworkUri = artworkUri?.toString(),
+                    fileName = cursor.getString(fileNameColumn).orEmpty(),
                 )
             }
         }
 
+        ensureActive()
         return songs
     }
 

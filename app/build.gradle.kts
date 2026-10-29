@@ -14,8 +14,9 @@ android {
         applicationId = "com.softmusic.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 29
-        versionName = "3.0.0"
+        versionCode = 34
+        versionName = "3.2.0"
+        testInstrumentationRunner = "com.softmusic.app.player.DjValidationInstrumentation"
     }
 
     buildFeatures {
@@ -26,12 +27,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    sourceSets {
-        getByName("main") {
-            assets.srcDir(rootProject.file("desktop-panel"))
-        }
     }
 
     applicationVariants.all {
@@ -56,6 +51,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-process:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-session:1.5.1")
@@ -65,6 +61,7 @@ dependencies {
     implementation("dev.chrisbanes.haze:haze:1.1.1")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

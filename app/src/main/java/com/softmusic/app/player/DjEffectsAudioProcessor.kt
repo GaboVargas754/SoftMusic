@@ -17,6 +17,7 @@ class DjEffectsAudioProcessor : BaseAudioProcessor() {
         val bpm: Float = 120f,
         val incoming: Boolean = false,
         val eq: MixEq = MixEq(),
+        val levelGain: Float = 1f,
         val resetGeneration: Long = 0,
     )
 
@@ -38,13 +39,18 @@ class DjEffectsAudioProcessor : BaseAudioProcessor() {
         }
     }
 
+    fun setLevelGain(gain: Float) {
+        val safeGain = if (gain.isFinite()) gain.coerceIn(0.4f, 1f) else 1f
+        controls.updateAndGet { it.copy(levelGain = safeGain) }
+    }
+
     fun setDeckEq(eq: MixEq) {
         controls.updateAndGet { previous -> previous.copy(eq = eq.sanitized()) }
     }
 
     /** The audio thread fades to dry, then clears delay/filter history without blocking the caller. */
     fun resetEffect() {
-        controls.updateAndGet { previous -> Controls(resetGeneration = previous.resetGeneration + 1) }
+        controls.updateAndGet { previous -> Controls(levelGain = previous.levelGain, resetGeneration = previous.resetGeneration + 1) }
     }
 
     override fun onConfigure(inputAudioFormat: AudioFormat): AudioFormat =
@@ -80,6 +86,7 @@ class DjEffectsAudioProcessor : BaseAudioProcessor() {
                     snapshot.incoming,
                 )
                 engine.setDeckEq(snapshot.eq)
+                engine.setLevelGain(snapshot.levelGain)
                 appliedControls = snapshot
             }
             engine.processPcm16(inputBuffer, output)
@@ -98,6 +105,7 @@ class DjEffectsAudioProcessor : BaseAudioProcessor() {
         } else {
             null
         }
+        dsp?.setLevelGain(controls.get().levelGain, immediate = true)
         appliedControls = null
         appliedResetGeneration = controls.get().resetGeneration
     }

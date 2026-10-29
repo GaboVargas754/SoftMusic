@@ -37,9 +37,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -121,6 +119,7 @@ internal fun CollectionDetailHeader(
     isPlaying: Boolean = false,
     onDelete: (() -> Unit)? = null,
     leadingActions: @Composable RowScope.() -> Unit = {},
+    actionRow: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val highPerformanceMode = LocalHighPerformanceMode.current
@@ -149,7 +148,6 @@ internal fun CollectionDetailHeader(
         }
     }
     val fontScale = LocalDensity.current.fontScale
-    val shuffleActive = playbackMode == PlaybackMode.Shuffle
     val enabled = songs.isNotEmpty()
     val hasCustomCover = coverSongId != null && artworkSongs.any { it.id == coverSongId }
 
@@ -218,105 +216,64 @@ internal fun CollectionDetailHeader(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                leadingActions()
-                if (onChangeCover != null) {
-                    IconButton(onClick = onChangeCover, enabled = enabled) {
-                        Icon(
-                            imageVector = if (hasCustomCover) MusicIcons.AlbumSelected else MusicIcons.Album,
-                            contentDescription = "Cambiar portada",
-                            tint = when {
-                                !enabled -> colors.onSurfaceVariant.copy(alpha = 0.38f)
-                                hasCustomCover -> colors.primary
-                                else -> colors.onSurfaceVariant
-                            },
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
-                }
-                if (onDelete != null) {
-                    var showOptions by remember(title) { mutableStateOf(false) }
-                    Box {
-                        IconButton(onClick = { showOptions = true }) {
+                if (actionRow != null) {
+                    actionRow()
+                } else {
+                    leadingActions()
+                    if (onChangeCover != null) {
+                        IconButton(onClick = onChangeCover, enabled = enabled) {
                             Icon(
-                                imageVector = MusicIcons.MoreVertical,
-                                contentDescription = "Más opciones de playlist",
-                                tint = colors.onSurfaceVariant,
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = showOptions,
-                            onDismissRequest = { showOptions = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Eliminar playlist", color = colors.error) },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = MusicIcons.Delete,
-                                        contentDescription = null,
-                                        tint = colors.error,
-                                    )
+                                imageVector = if (hasCustomCover) MusicIcons.AlbumSelected else MusicIcons.Album,
+                                contentDescription = "Cambiar portada",
+                                tint = when {
+                                    !enabled -> colors.onSurfaceVariant.copy(alpha = 0.38f)
+                                    hasCustomCover -> colors.primary
+                                    else -> colors.onSurfaceVariant
                                 },
-                                onClick = {
-                                    showOptions = false
-                                    onDelete()
-                                },
+                                modifier = Modifier.size(24.dp),
                             )
                         }
                     }
-                }
-                Spacer(Modifier.weight(1f))
-                IconButton(
-                    onClick = {
-                        onPlaybackModeChange(
-                            if (shuffleActive) PlaybackMode.Ordered else PlaybackMode.Shuffle,
-                        )
-                    },
-                    enabled = enabled,
-                    modifier = Modifier.semantics {
-                        selected = shuffleActive
-                        stateDescription = if (shuffleActive) "Activado" else "Desactivado"
-                    },
-                ) {
-                    Icon(
-                        imageVector = if (shuffleActive) MusicIcons.ShuffleSelected else MusicIcons.Shuffle,
-                        contentDescription = "Alternar aleatorio",
-                        tint = when {
-                            !enabled -> colors.onSurfaceVariant.copy(alpha = 0.38f)
-                            shuffleActive -> colors.primary
-                            else -> colors.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(25.dp),
+                    if (onDelete != null) {
+                        var showOptions by remember(title) { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showOptions = true }) {
+                                Icon(
+                                    imageVector = MusicIcons.MoreVertical,
+                                    contentDescription = "Más opciones de playlist",
+                                    tint = colors.onSurfaceVariant,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showOptions,
+                                onDismissRequest = { showOptions = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Eliminar playlist", color = colors.error) },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = MusicIcons.Delete,
+                                            contentDescription = null,
+                                            tint = colors.error,
+                                        )
+                                    },
+                                    onClick = {
+                                        showOptions = false
+                                        onDelete()
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    CollectionPlaybackActions(
+                        songsAvailable = enabled,
+                        playbackMode = playbackMode,
+                        onPlay = onPlay,
+                        onPlaybackModeChange = onPlaybackModeChange,
+                        playDescription = playDescription,
+                        isPlaying = isPlaying,
                     )
-                }
-                Box(modifier = Modifier.size(64.dp), contentAlignment = Alignment.Center) {
-                    IconButton(
-                        onClick = onPlay,
-                        enabled = enabled,
-                        modifier = Modifier
-                            .size(60.dp)
-                            .clip(CircleShape)
-                            .background(if (enabled) colors.primary else colors.surfaceVariant)
-                            .semantics {
-                                if (isPlaying) stateDescription = "Reproduciendo"
-                            },
-                    ) {
-                        Icon(
-                            imageVector = MusicIcons.Play,
-                            contentDescription = playDescription,
-                            tint = if (enabled) colors.onPrimary else colors.onSurfaceVariant.copy(alpha = 0.38f),
-                            modifier = Modifier.size(34.dp),
-                        )
-                    }
-                    if (isPlaying && enabled) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(3.dp)
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(colors.primary),
-                        )
-                    }
                 }
             }
         }

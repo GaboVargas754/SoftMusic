@@ -95,3 +95,68 @@ private fun List<MusicPlaylist>.mutatePlaylist(
 }
 
 private fun String.playlistNameKey(): String = trim().lowercase()
+
+data class PlaylistSongsRemoveResult(
+    val playlists: List<MusicPlaylist>,
+    val removedCount: Int,
+) {
+    val changed: Boolean = removedCount > 0
+}
+
+/** Matches the accent-insensitive names shown by the playlist creation form. */
+fun normalizedPlaylistName(name: String): String = java.text.Normalizer
+    .normalize(name.trim().lowercase(), java.text.Normalizer.Form.NFD)
+    .replace(Regex("\\p{Mn}+"), "")
+
+fun List<MusicPlaylist>.withPlaylistRenamed(playlistId: String, name: String): PlaylistMutation {
+    val cleanName = name.trim()
+    if (cleanName.isBlank() || cleanName.length > MAX_PLAYLIST_NAME_LENGTH ||
+        any { it.id != playlistId && normalizedPlaylistName(it.name) == normalizedPlaylistName(cleanName) }
+    ) {
+        return PlaylistMutation(this, changed = false)
+    }
+    return mutatePlaylist(playlistId) { it.copy(name = cleanName) }
+}
+
+/** Replaces visible slots only; a refresh or another edit invalidates the captured full order. */
+fun List<MusicPlaylist>.withPlaylistSongsReordered(
+    playlistId: String,
+    expectedFullIds: List<Long>,
+    latestVisibleIds: List<Long>,
+    orderedVisibleIds: List<Long>,
+): PlaylistMutation {
+    val playlist = firstOrNull { it.id == playlistId } ?: return PlaylistMutation(this, changed = false)
+    if (playlist.songIds != expectedFullIds) return PlaylistMutation(this, changed = false)
+    val visibleIds = latestVisibleIds.toSet()
+    if (latestVisibleIds.size != visibleIds.size ||
+        orderedVisibleIds.size != latestVisibleIds.size ||
+        orderedVisibleIds.toSet() != visibleIds ||
+        playlist.songIds.filter { it in visibleIds } != latestVisibleIds
+    ) {
+        return PlaylistMutation(this, changed = false)
+    }
+    val replacements = orderedVisibleIds.iterator()
+    val reordered = playlist.songIds.map { if (it in visibleIds) replacements.next() else it }
+    return mutatePlaylist(playlistId) { it.copy(songIds = reordered) }
+}
+
+fun List<MusicPlaylist>.withSongsAddedToPlaylist(
+    playlistId: String,
+    songIds: List<Long>,
+): PlaylistQueueAddResult = withQueueAddedToPlaylist(playlistId, songIds)
+
+fun List<MusicPlaylist>.withoutSongsFromPlaylist(
+    playlistId: String,
+    songIds: Set<Long>,
+): PlaylistSongsRemoveResult {
+    var removedCount = 0
+    val mutation = mutatePlaylist(playlistId) { playlist ->
+        val removedIds = playlist.songIds.filter { it in songIds }.toSet()
+        removedCount = removedIds.size
+        if (removedIds.isEmpty()) playlist else playlist.copy(
+            songIds = playlist.songIds.filterNot { it in removedIds },
+            coverSongId = playlist.coverSongId?.takeUnless { it in removedIds },
+        )
+    }
+    return PlaylistSongsRemoveResult(mutation.playlists, removedCount)
+}

@@ -1,0 +1,457 @@
+{
+  "algorithm": "Technical matte extraction; no generated or redrawn artwork",
+  "pillow": "13.0.0",
+  "numpy": "2.5.4",
+  "parameters": {
+    "canvas_pixels": [
+      840,
+      280
+    ],
+    "source_pixels": [
+      2172,
+      724
+    ],
+    "foreground_seed_max_channel_above": 32,
+    "icon_region": [
+      0,
+      0,
+      640,
+      724
+    ],
+    "icon_close_kernel": 5,
+    "opaque_erosion_kernel": 3,
+    "edge_neighborhood_kernel": 5,
+    "edge_peak_kernel": 7,
+    "background_sample": [
+      0,
+      0,
+      2172,
+      120
+    ],
+    "background_median_adjustment": [
+      -1,
+      -1,
+      -1
+    ],
+    "background_noise_cutoff_above_max": 2,
+    "registration_white_threshold": 140,
+    "registration_white_region": [
+      850,
+      0,
+      1200,
+      724
+    ],
+    "registration_icon_left": 237,
+    "registration_text_bottom": 464,
+    "registration_text_height": 227,
+    "common_canvas_side_margin_source_pixels": 26,
+    "resampling": "Lanczos",
+    "webp": {
+      "lossless": true,
+      "method": 6,
+      "exact": true
+    }
+  },
+  "registered_common_crop": [
+    208.99115044247787,
+    35.19721503007821,
+    2062.1484716157206,
+    652.9163220878258
+  ],
+  "archives": {
+    "SoftMusic_9_Logotipos_Tematicos.zip": "0533f9a4f89e66a5822c0fce1a843a36b90142a7f3aee6c290e63c74e358b34d",
+    "Logotipo oficial de SoftMusic.png": "40056333391f3a4aa0deb981f2627a1caeddfa7e156935c00bfd697ce9ca21cb"
+  },
+  "logos": {
+    "original": {
+      "background_rgb": [
+        6.0,
+        7.0,
+        9.0
+      ],
+      "source_alpha_bounds": [
+        235,
+        174,
+        1959,
+        533
+      ],
+      "source_text_top_bottom": [
+        237,
+        464
+      ],
+      "source_icon_left": 237,
+      "registration_scale": 1.0,
+      "registration_translation": [
+        0.0,
+        0.0
+      ],
+      "source_sha256": "40056333391f3a4aa0deb981f2627a1caeddfa7e156935c00bfd697ce9ca21cb",
+      "source_bytes": 1205199,
+      "source_crop": [
+        208.99115044247787,
+        35.19721503007821,
+        2062.1484716157206,
+        652.9163220878258
+      ],
+      "output_alpha_bounds": [
+        10,
+        61,
+        795,
+        227
+      ],
+      "output_bytes": 66182,
+      "output_sha256": "73a6a4f51ed153c56e4afbc3bf6b7a1fae516dde974742790ac184c477daf29e"
+    },
+    "halloween": {
+      "background_rgb": [
+        4.0,
+        6.0,
+        8.0
+      ],
+      "source_alpha_bounds": [
+        229,
+        173,
+        1956,
+        533
+      ],
+      "source_text_top_bottom": [
+        237,
+        463
+      ],
+      "source_icon_left": 231,
+      "registration_scale": 1.0044247787610618,
+      "registration_translation": [
+        4.977876106194714,
+        -1.0486725663716356
+      ],
+      "source_sha256": "9583aecbb11a12473220f777d9bfd7b559e3e336070eba64dbba5dd6e7c29c97",
+      "source_bytes": 1223346,
+      "source_crop": [
+        203.11453744493392,
+        36.0862140828091,
+        2048.108169978647,
+        651.0840915940469
+      ],
+      "output_alpha_bounds": [
+        11,
+        61,
+        800,
+        228
+      ],
+      "output_bytes": 74162,
+      "output_sha256": "2daa14fee13041f91d769157e9901bd197ab128d7b2d75f0033222bcd60b5ea6"
+    },
+    "christmas": {
+      "background_rgb": [
+        5.0,
+        6.0,
+        8.0
+      ],
+      "source_alpha_bounds": [
+        228,
+        171,
+        2015,
+        540
+      ],
+      "source_text_top_bottom": [
+        238,
+        474
+      ],
+      "source_icon_left": 230,
+      "registration_scale": 0.961864406779661,
+      "registration_translation": [
+        15.77118644067798,
+        8.076271186440692
+      ],
+      "source_sha256": "5490dcd1ae37f3e955755730fab972fcf4e138fd86af8970ceee40cdf5ca8439",
+      "source_bytes": 1222265,
+      "source_crop": [
+        200.88066742037347,
+        28.1962235554998,
+        2127.5111863493835,
+        670.4063965318367
+      ],
+      "output_alpha_bounds": [
+        10,
+        61,
+        792,
+        225
+      ],
+      "output_bytes": 74320,
+      "output_sha256": "d4b5310ca982e0fac6251db73329fd10dcf74a3c3cc57c11770eb189d16d3563"
+    },
+    "day_of_the_dead": {
+      "background_rgb": [
+        4.0,
+        6.0,
+        8.0
+      ],
+      "source_alpha_bounds": [
+        235,
+        172,
+        1999,
+        533
+      ],
+      "source_text_top_bottom": [
+        236,
+        464
+      ],
+      "source_icon_left": 237,
+      "registration_scale": 0.9956140350877193,
+      "registration_translation": [
+        1.0394736842105203,
+        2.0350877192982466
+      ],
+      "source_sha256": "c8ba6e98fd74b8209f008af466b64eaaa5c882162bd154a80b54e40e7bd5914c",
+      "source_bytes": 1233574,
+      "source_crop": [
+        208.86776344002183,
+        33.30821597734728,
+        2070.1887732527944,
+        653.7485525816048
+      ],
+      "output_alpha_bounds": [
+        10,
+        61,
+        809,
+        227
+      ],
+      "output_bytes": 81814,
+      "output_sha256": "97addff0bf93c897622893c011e32889125c11792ea9794ca00ff73280a0beab"
+    },
+    "new_year": {
+      "background_rgb": [
+        4.0,
+        5.0,
+        7.0
+      ],
+      "source_alpha_bounds": [
+        229,
+        167,
+        1974,
+        557
+      ],
+      "source_text_top_bottom": [
+        254,
+        483
+      ],
+      "source_icon_left": 231,
+      "registration_scale": 0.9912663755458515,
+      "registration_translation": [
+        8.017467248908304,
+        -14.78165938864629
+      ],
+      "source_sha256": "5e6aa72e3b3019ea49ae1ca285518df0d5dd8cefd4231161ababfc1fcfb95946",
+      "source_bytes": 1250266,
+      "source_crop": [
+        202.7443764375658,
+        50.41921692461635,
+        2072.229074889868,
+        673.5807830753838
+      ],
+      "output_alpha_bounds": [
+        10,
+        51,
+        797,
+        229
+      ],
+      "output_bytes": 87612,
+      "output_sha256": "bff7a21c7de86a53f5f6a66e7edff6e8f41afc82a1aca3aaa9519b6a0472391d"
+    },
+    "valentines": {
+      "background_rgb": [
+        5.0,
+        6.0,
+        8.0
+      ],
+      "source_alpha_bounds": [
+        229,
+        168,
+        1982,
+        536
+      ],
+      "source_text_top_bottom": [
+        233,
+        467
+      ],
+      "source_icon_left": 231,
+      "registration_scale": 0.9700854700854701,
+      "registration_translation": [
+        12.910256410256409,
+        10.97008547008545
+      ],
+      "source_sha256": "5f16ac1f87c97a1989bd2c3f16691b331daf75c0e3a449119404ecb5ca853409",
+      "source_bytes": 1209387,
+      "source_crop": [
+        202.12744142528555,
+        24.9742216609617,
+        2112.4305830752364,
+        661.7419355442787
+      ],
+      "output_alpha_bounds": [
+        10,
+        61,
+        784,
+        226
+      ],
+      "output_bytes": 71568,
+      "output_sha256": "e1cddf41681b39e20b66f63356de46d2bf30b0792b7d3af04daa527ac5d946f5"
+    },
+    "independence": {
+      "background_rgb": [
+        5.0,
+        6.0,
+        7.0
+      ],
+      "source_alpha_bounds": [
+        235,
+        171,
+        2052,
+        535
+      ],
+      "source_text_top_bottom": [
+        237,
+        466
+      ],
+      "source_icon_left": 237,
+      "registration_scale": 0.9912663755458515,
+      "registration_translation": [
+        2.069868995633186,
+        2.0698689956332146
+      ],
+      "source_sha256": "c62fbd9eb645025733b3b9884ab3685a64ba04544c840e1d9178088c54a201d8",
+      "source_bytes": 1223027,
+      "source_crop": [
+        208.7443764375658,
+        33.41921692461632,
+        2078.229074889868,
+        656.5807830753838
+      ],
+      "output_alpha_bounds": [
+        10,
+        60,
+        830,
+        227
+      ],
+      "output_bytes": 77322,
+      "output_sha256": "4465f80db8b2160b0d58cd386e92c8b137d92ab5c01bf72974f17b3d760849c6"
+    },
+    "easter": {
+      "background_rgb": [
+        4.0,
+        6.0,
+        8.0
+      ],
+      "source_alpha_bounds": [
+        235,
+        174,
+        1989,
+        545
+      ],
+      "source_text_top_bottom": [
+        246,
+        478
+      ],
+      "source_icon_left": 237,
+      "registration_scale": 0.978448275862069,
+      "registration_translation": [
+        5.107758620689651,
+        -3.6982758620689538
+      ],
+      "source_sha256": "3975751cd8430ed9708eb4ec2d202c0d53bdb330206191498d9eea8d40653e83",
+      "source_bytes": 1196552,
+      "source_crop": [
+        208.37421543019767,
+        39.752219766423536,
+        2102.349979801089,
+        671.0774745567207
+      ],
+      "output_alpha_bounds": [
+        10,
+        58,
+        791,
+        225
+      ],
+      "output_bytes": 74558,
+      "output_sha256": "3a414b1422b39aa151c52208473aca05a1d98b0e5a685f752dcafd75f8a98a53"
+    },
+    "music_day": {
+      "background_rgb": [
+        6.0,
+        7.0,
+        9.0
+      ],
+      "source_alpha_bounds": [
+        234,
+        179,
+        1994,
+        537
+      ],
+      "source_text_top_bottom": [
+        239,
+        465
+      ],
+      "source_icon_left": 236,
+      "registration_scale": 1.0044247787610618,
+      "registration_translation": [
+        -0.04424778761060111,
+        -3.0575221238937615
+      ],
+      "source_sha256": "e5e2a78ecab7b1551916d5c3857e478824512fc3b3df55350a5a6a843d41a21a",
+      "source_bytes": 1213827,
+      "source_crop": [
+        208.11453744493392,
+        38.08621408280911,
+        2053.108169978647,
+        653.0840915940469
+      ],
+      "output_alpha_bounds": [
+        10,
+        62,
+        814,
+        229
+      ],
+      "output_bytes": 78406,
+      "output_sha256": "85717272791b60f8ffe438aef70fc4daf7b8780ddb3328c4fa942a5f9cf9b8ba"
+    },
+    "anniversary": {
+      "background_rgb": [
+        5.0,
+        6.0,
+        8.0
+      ],
+      "source_alpha_bounds": [
+        235,
+        173,
+        2043,
+        542
+      ],
+      "source_text_top_bottom": [
+        245,
+        475
+      ],
+      "source_icon_left": 237,
+      "registration_scale": 0.9869565217391304,
+      "registration_translation": [
+        3.0913043478260818,
+        -4.804347826086939
+      ],
+      "source_sha256": "c62e07f86a239ece1d6fec960641f5d1f2160e946ce32740bc9a555fc9b9c23d",
+      "source_bytes": 1180769,
+      "source_crop": [
+        208.62098943510975,
+        40.5302178718854,
+        2086.2693765269414,
+        666.4130135691628
+      ],
+      "output_alpha_bounds": [
+        10,
+        58,
+        822,
+        226
+      ],
+      "output_bytes": 76800,
+      "output_sha256": "44fd36a363b6904926b42b57f515dea6abf1d0961453a550e1f6878c8ee8b5f2"
+    }
+  }
+}

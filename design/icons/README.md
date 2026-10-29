@@ -1,4 +1,39 @@
-# SoftMusic — 91 íconos con estados normal y seleccionado
+# SoftMusic — estándar de iconos de interfaz y acciones
+
+SoftMusic dispone de 91 diseños de interfaz y 49 acciones V2. Cada diseño tiene
+recursos normales y seleccionados explícitos. Las acciones V2 y sus fuentes se
+documentan en [actions-v2/README.md](actions-v2/README.md); su
+[catálogo sin conexión](actions-v2/Catalogo.html) muestra los 49 diseños.
+
+## Estándar de acciones
+
+- Usar gris `#A8AFBD` para el estado normal y turquesa `#2CE4D4` para el estado
+  activo. El icono mide 24dp y su objetivo táctil mide al menos 48 × 48dp.
+- Reservar la variante `Selected` para estados persistentes: selección vigente,
+  modo de selección o criterio de orden activo. Una pulsación o un comando puntual
+  no deja el icono seleccionado.
+- Situar las acciones frecuentes en la cabecera. Mostrar las secundarias en un
+  menú con texto e icono, manteniendo una etiqueta accesible para cada acción.
+- Pedir confirmación antes de ejecutar acciones destructivas. Quitar una canción
+  de una playlist modifica esa lista; borrar un archivo elimina contenido del
+  dispositivo y requiere una acción diferenciada.
+- Usar el componente compartido `MusicActionIconButton` para los botones de
+  acciones en Compose. El llamador elige el vector normal o `Selected` de
+  `MusicActionIcons` y lo pasa como `icon`. El botón aplica
+  `colorScheme.onSurfaceVariant` (`#A8AFBD`) cuando `selected` es `null` o `false`,
+  y `colorScheme.primary` (`#2CE4D4`) cuando es `true`; deshabilitado usa el gris
+  con alfa 0.38. Pasar `selected = null` para comandos puntuales y un booleano
+  para estados persistentes, que el botón también expone a accesibilidad.
+- Cargar vectores individuales con `ImageVector.vectorResource`; los selectores
+  `StateListDrawable` no forman parte de la integración de Compose.
+- Mantener el tema oscuro estable, incluso cuando Android informa modo claro.
+  Los normales oscuros y los seleccionados de acciones viven en `drawable/`, sin
+  variantes de acciones en `drawable-night/`.
+
+El catálogo pone los recursos a disposición de las funciones existentes. La
+presencia de un icono no añade una acción a la aplicación.
+
+## Familia de interfaz: 91 diseños
 
 Familia para la interfaz oscura de SoftMusic: gris `#A8AFBD` en estado normal y
 turquesa `#2CE4D4` en estado seleccionado. Los fondos son transparentes. Se permite
@@ -83,4 +118,4 @@ añaden `android:autoMirrored="true"` para respetar la dirección RTL.
 
 De los 460 archivos entregados, 369 se reubicaron y 91 selectores se omitieron.
 Las carpetas de entrega se retiraron después de validar la migración. El launcher
-y el icono de notificación del panel web conservan sus recursos independientes.
+conserva sus recursos independientes.

@@ -93,12 +93,16 @@ internal fun PlaybackQueueSheet(
     sourceLabel: String,
     isPlaying: Boolean,
     playbackMode: PlaybackMode,
+    smartShuffleEnabled: Boolean,
+    smartQueueBusy: Boolean,
+    smartQueueMessage: String?,
     sleepTimerRemainingMs: Long,
     onPlaySong: (Song) -> Unit,
     onTogglePlayPause: () -> Unit,
     onRemoveSong: (Song) -> Unit,
     onMoveSong: (Song, Int) -> Unit,
     onClearUpcomingQueue: () -> Unit,
+    onSmartOrderQueue: () -> Unit,
     onCreatePlaylistFromQueue: (String) -> Boolean,
     onAddQueueToPlaylist: (String) -> Int,
     onToggleShuffle: () -> Unit,
@@ -271,6 +275,14 @@ internal fun PlaybackQueueSheet(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            MusicActionIconButton(
+                icon = if (smartQueueBusy) MusicIcons.SmartSortSelected else MusicIcons.SmartSort,
+                contentDescription = if (smartQueueBusy) "Cancelar análisis inteligente" else "Ordenar siguientes por compatibilidad",
+                enabled = smartQueueBusy || (upcomingSongs.size > 1 && !isClearingUpcoming &&
+                    reorderState.draggedSongId == null && !reorderState.awaitingMove),
+                preserveIconColors = true,
+                onClick = onSmartOrderQueue,
+            )
             Box {
                 IconButton(onClick = { showActions = true }, modifier = Modifier.size(48.dp)) {
                     Icon(
@@ -322,8 +334,19 @@ internal fun PlaybackQueueSheet(
             }
         }
 
-        if (isClearingUpcoming) {
+        if (isClearingUpcoming || smartQueueBusy) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(2.dp))
+        }
+        if (smartQueueBusy || smartQueueMessage != null) {
+            Text(
+                text = smartQueueMessage ?: "Analizando canciones…",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         QueueSectionTitle("Reproduciendo ahora")
         Row(
@@ -448,11 +471,20 @@ internal fun PlaybackQueueSheet(
             val shuffleActive = playbackMode == PlaybackMode.Shuffle
             QueueFooterCard(
                 title = "Aleatorio",
-                imageVector = if (shuffleActive) MusicIcons.ShuffleSelected else MusicIcons.Shuffle,
+                imageVector = when {
+                    smartShuffleEnabled && shuffleActive -> MusicIcons.SmartShuffleSelected
+                    shuffleActive -> MusicIcons.ShuffleSelected
+                    else -> MusicIcons.Shuffle
+                },
                 active = shuffleActive,
                 description = if (shuffleActive) "Desactivar aleatorio" else "Activar aleatorio",
-                status = if (shuffleActive) "Activado" else "Desactivado",
+                status = when {
+                    smartShuffleEnabled && shuffleActive -> "Aleatorio inteligente"
+                    shuffleActive -> "Activado"
+                    else -> "Desactivado"
+                },
                 modifier = Modifier.weight(1f),
+                preserveIconColors = smartShuffleEnabled && shuffleActive,
                 onClick = onToggleShuffle,
             )
             val timerActive = sleepTimerRemainingMs > 0L
@@ -581,6 +613,7 @@ private fun QueueFooterCard(
     description: String,
     status: String,
     modifier: Modifier,
+    preserveIconColors: Boolean = false,
     onClick: () -> Unit,
 ) {
     Surface(
@@ -601,7 +634,7 @@ private fun QueueFooterCard(
             Icon(
                 imageVector = imageVector,
                 contentDescription = null,
-                tint = if (active) MaterialTheme.colorScheme.primary else Color.White,
+                tint = if (preserveIconColors) Color.Unspecified else if (active) MaterialTheme.colorScheme.primary else Color.White,
                 modifier = Modifier.size(18.dp),
             )
             Text(

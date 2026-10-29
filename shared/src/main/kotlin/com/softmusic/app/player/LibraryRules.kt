@@ -41,3 +41,24 @@ fun List<Song>.toFolders(): List<MusicFolder> = groupBy { it.folderPath }
         )
     }
     .sortedWith(compareBy<MusicFolder> { it.name.lowercase() }.thenBy { it.path.lowercase() })
+
+
+/** Refreshing an unavailable volume must not erase the user's folder preferences or collections. */
+fun PlayerUiState.withRefreshedLibrary(songs: List<Song>): PlayerUiState {
+    val selection = selectedFolderPath?.takeUnless { it in hiddenFolderPaths }
+    return copy(
+        songs = songs,
+        allFolders = songs.toFolders(),
+        folders = songs.visibleSongs(emptySet(), excludeSmallAudios).toFolders().visibleFolders(hiddenFolderPaths),
+        selectedFolderPath = selection,
+        visibleSongs = songs.filteredAndSorted(selection, sortMode, hiddenFolderPaths, excludeSmallAudios),
+        isLoading = false,
+        errorMessage = null,
+    )
+}
+
+/** Refresh metadata and remove missing tracks while retaining the playing item and queue order. */
+fun List<Song>.refreshedQueuePreservingCurrent(availableSongs: List<Song>, currentSongId: Long?): List<Song> {
+    val availableById = availableSongs.associateBy { it.id }
+    return mapNotNull { previous -> availableById[previous.id] ?: previous.takeIf { it.id == currentSongId } }
+}

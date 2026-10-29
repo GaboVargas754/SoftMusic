@@ -25,6 +25,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,86 +42,126 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.softmusic.app.backup.BackupPreferences
+import com.softmusic.app.backup.openAppPreferences
 import com.softmusic.app.player.AutoDjSettings
 import com.softmusic.app.player.DjMixMode
 import com.softmusic.app.player.MusicService
 import com.softmusic.app.player.MusicViewModel
 import com.softmusic.app.player.PlaybackMode
 import com.softmusic.app.player.SortMode
+import com.softmusic.app.icons.SeasonalIconManager
+import com.softmusic.app.icons.drawableRes
+import com.softmusic.app.icons.logoDrawableRes
+import com.softmusic.app.ui.LocalSeasonalLogo
+import com.softmusic.app.ui.LocalSeasonalIcon
 import com.softmusic.app.ui.AppUpdateDialog
+import com.softmusic.app.ui.BackupUiActions
+import com.softmusic.app.ui.LocalBackupActions
 import com.softmusic.app.ui.SoftMusicApp
 import com.softmusic.app.ui.theme.SoftMusicTheme
 import com.softmusic.app.update.AppUpdateChecker
+import com.softmusic.app.update.AppUpdateCheckResult
 import com.softmusic.app.update.AppUpdateInfo
-import kotlinx.coroutines.launch
+import com.softmusic.app.update.ManualUpdateCheckRunner
+import com.softmusic.app.update.presentation
 
 class MainActivity : ComponentActivity() {
+    private val seasonalIconVisibilityToken = Any()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SeasonalIconManager.get(this).setActivityVisible(seasonalIconVisibilityToken, true)
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
         }
-        val preferences = getSharedPreferences(THEME_PREFS_NAME, MODE_PRIVATE)
+        val preferences = openAppPreferences(this)
         preferences.edit()
             .remove(KEY_LEGACY_THEME_MODE)
             .remove(KEY_LEGACY_COLOR_PALETTE)
             .apply()
         setContent {
+            val seasonalIcon by SeasonalIconManager.get(this).icon.collectAsStateWithLifecycle()
             var highPerformanceMode by remember { mutableStateOf(preferences.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)) }
             var defaultFolderPath by remember { mutableStateOf(preferences.getString(KEY_DEFAULT_FOLDER_PATH, null)) }
             var defaultPlaybackMode by remember { mutableStateOf(preferences.readDefaultPlaybackMode()) }
             var defaultSortMode by remember { mutableStateOf(preferences.readDefaultSortMode()) }
-            var fontScale by remember { mutableStateOf(preferences.readFontScale()) }
+            var fontScale by remember { mutableFloatStateOf(preferences.readFontScale()) }
             var hiddenFolderPaths by remember { mutableStateOf(preferences.readHiddenFolderPaths()) }
             var excludeSmallAudios by remember { mutableStateOf(preferences.getBoolean(KEY_EXCLUDE_SMALL_AUDIOS, true)) }
             var djModeEnabled by remember {
                 mutableStateOf(runCatching { preferences.getBoolean(KEY_DJ_MODE_ENABLED, false) }.getOrDefault(false))
             }
             var djMixMode by remember { mutableStateOf(preferences.readDjMixMode()) }
-            var djMixDurationSeconds by remember { mutableStateOf(preferences.readDjMixDurationSeconds()) }
+            var djMixDurationSeconds by remember { mutableIntStateOf(preferences.readDjMixDurationSeconds()) }
             var autoDjSettings by remember { mutableStateOf(preferences.readAutoDjSettings()) }
             var audioPermissionRequested by remember { mutableStateOf(preferences.getBoolean(KEY_AUDIO_PERMISSION_REQUESTED, false)) }
             var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
             var isCheckingForUpdates by remember { mutableStateOf(false) }
             var updateCheckStatus by remember { mutableStateOf<String?>(null) }
             val updateCheckScope = rememberCoroutineScope()
+            val manualUpdateCheck = remember { ManualUpdateCheckRunner() }
 
-            fun showAvailableUpdate(updateInfo: AppUpdateInfo?, ignoreSkippedVersion: Boolean): Boolean {
-                val skippedVersionCode = preferences.getLong(KEY_SKIPPED_UPDATE_VERSION_CODE, -1L)
-                if (
-                    updateInfo != null &&
-                    (ignoreSkippedVersion || updateInfo.required || updateInfo.versionCode != skippedVersionCode)
-                ) {
-                    availableUpdate = updateInfo
-                    updateCheckStatus = null
-                    return true
+            fun refreshPortablePreferences() {
+                highPerformanceMode = preferences.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
+                defaultFolderPath = preferences.getString(KEY_DEFAULT_FOLDER_PATH, null)
+                defaultPlaybackMode = preferences.readDefaultPlaybackMode()
+                defaultSortMode = preferences.readDefaultSortMode()
+                fontScale = preferences.readFontScale()
+                hiddenFolderPaths = preferences.readHiddenFolderPaths()
+                excludeSmallAudios = preferences.getBoolean(KEY_EXCLUDE_SMALL_AUDIOS, true)
+                djModeEnabled = runCatching { preferences.getBoolean(KEY_DJ_MODE_ENABLED, false) }.getOrDefault(false)
+                djMixMode = preferences.readDjMixMode()
+                djMixDurationSeconds = preferences.readDjMixDurationSeconds()
+                autoDjSettings = preferences.readAutoDjSettings()
+            }
+
+            DisposableEffect(preferences) {
+                val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                    if (key == KEY_BACKUP_PREFERENCES_REVISION) refreshPortablePreferences()
                 }
-                return false
+                preferences.registerOnSharedPreferenceChangeListener(listener)
+                // A restore may finish while an activity is being recreated.
+                refreshPortablePreferences()
+                onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+            }
+
+            fun applyUpdateCheckResult(result: AppUpdateCheckResult, manual: Boolean) {
+                val presentation = result.presentation(
+                    manual = manual,
+                    skippedVersionCode = preferences.getLong(KEY_SKIPPED_UPDATE_VERSION_CODE, -1L),
+                )
+                presentation.availableUpdate?.let {
+                    availableUpdate = it
+                    updateCheckStatus = null
+                }
+                if (manual && presentation.availableUpdate == null) {
+                    updateCheckStatus = presentation.status
+                }
             }
 
             fun checkForUpdatesManually() {
-                if (isCheckingForUpdates) return
-                isCheckingForUpdates = true
-                updateCheckStatus = null
-                updateCheckScope.launch {
-                    val updateInfo = AppUpdateChecker.checkForUpdate()
-                    val updateFound = showAvailableUpdate(updateInfo, ignoreSkippedVersion = true)
-                    if (!updateFound) {
-                        updateCheckStatus = "No hay actualizaciones disponibles."
-                    }
-                    isCheckingForUpdates = false
-                }
+                manualUpdateCheck.launch(
+                    scope = updateCheckScope,
+                    check = AppUpdateChecker::checkForUpdate,
+                    onCheckingChanged = { checking ->
+                        isCheckingForUpdates = checking
+                        if (checking) updateCheckStatus = null
+                    },
+                    onResult = { result -> applyUpdateCheckResult(result, manual = true) },
+                )
             }
 
             LaunchedEffect(Unit) {
-                val updateInfo = AppUpdateChecker.checkForUpdate()
-                showAvailableUpdate(updateInfo, ignoreSkippedVersion = false)
+                applyUpdateCheckResult(AppUpdateChecker.checkForUpdate(), manual = false)
             }
 
             SoftMusicTheme {
                 val baseDensity = LocalDensity.current
                 CompositionLocalProvider(
+                    LocalSeasonalIcon provides seasonalIcon.drawableRes,
+                    LocalSeasonalLogo provides seasonalIcon.logoDrawableRes,
                     LocalDensity provides Density(
                         density = baseDensity.density,
                         fontScale = baseDensity.fontScale * fontScale,
@@ -238,6 +280,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        SeasonalIconManager.get(this).setActivityVisible(seasonalIconVisibilityToken, true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        SeasonalIconManager.get(this).setActivityVisible(seasonalIconVisibilityToken, false)
+    }
+
+    override fun onDestroy() {
+        SeasonalIconManager.get(this).setActivityVisible(seasonalIconVisibilityToken, false)
+        super.onDestroy()
+    }
+
     private fun closeApplication() {
         stopMusicService()
         finishAndRemoveTask()
@@ -332,7 +389,8 @@ private fun SoftMusicRoot(
 ) {
     val viewModel: MusicViewModel = viewModel()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val webPanelState by viewModel.webPanelState.collectAsStateWithLifecycle()
+    val pendingBackupCount by viewModel.pendingBackupCount.collectAsStateWithLifecycle()
+    val backupBusy by viewModel.backupBusy.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     var permissionGranted by remember { mutableStateOf(checkAudioPermission()) }
     var showAudioPermissionRationale by remember { mutableStateOf(shouldShowAudioPermissionRationale()) }
@@ -371,13 +429,18 @@ private fun SoftMusicRoot(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshPermissionState()
+                if (defaultsApplied) {
+                    viewModel.setLibraryAccess(permissionGranted)
+                    viewModel.onLibraryResume()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(defaultsApplied, backupBusy) {
+        if (defaultsApplied || viewModel.backupBusy.value) return@LaunchedEffect
         viewModel.applyDefaultPreferences(
             defaultFolderPath = defaultFolderPath,
             defaultPlaybackMode = defaultPlaybackMode,
@@ -393,9 +456,7 @@ private fun SoftMusicRoot(
     }
 
     LaunchedEffect(permissionGranted, defaultsApplied) {
-        if (permissionGranted && defaultsApplied) {
-            viewModel.loadSongs()
-        }
+        if (defaultsApplied) viewModel.setLibraryAccess(permissionGranted)
     }
 
     LaunchedEffect(uiState.currentSong?.id, notificationPermissionGranted) {
@@ -404,151 +465,188 @@ private fun SoftMusicRoot(
         }
     }
 
-    LaunchedEffect(defaultsApplied, uiState.hiddenFolderPaths, hiddenFolderPaths) {
-        if (defaultsApplied && uiState.allFolders.isNotEmpty() && uiState.hiddenFolderPaths != hiddenFolderPaths) {
-            onHiddenFolderPathsChange(uiState.hiddenFolderPaths)
+    LaunchedEffect(defaultsApplied, uiState.hiddenFolderPaths, hiddenFolderPaths, backupBusy) {
+        if (viewModel.backupBusy.value) return@LaunchedEffect
+        val currentState = viewModel.uiState.value
+        if (defaultsApplied && currentState.allFolders.isNotEmpty() && currentState.hiddenFolderPaths != hiddenFolderPaths) {
+            onHiddenFolderPathsChange(currentState.hiddenFolderPaths)
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        SoftMusicApp(
-            uiState = uiState,
-            playbackProgressState = viewModel.progressState,
-            hasAudioPermission = permissionGranted,
-            showAudioPermissionRationale = showAudioPermissionRationale,
-            audioPermissionPermanentlyDenied = !permissionGranted && audioPermissionRequested && !showAudioPermissionRationale,
-            hasNotificationPermission = notificationPermissionGranted,
-            webPanelState = webPanelState,
-            onRequestPermission = {
-                onAudioPermissionRequested()
-                permissionLauncher.launch(audioPermissionName())
-            },
-            onRequestNotificationPermission = ::requestNotificationPermission,
-            onRefreshLibrary = viewModel::loadSongs,
-            onPlaySong = viewModel::playSong,
-            onPlayList = viewModel::playVisibleList,
-            onPlayQueuedSong = viewModel::playQueuedSong,
-            onPlayQueue = viewModel::playQueue,
-            onPlayQueueSong = viewModel::playQueueSong,
-            onRemoveFromQueue = viewModel::removeQueuedSong,
-            onMoveQueuedSong = viewModel::moveQueuedSong,
-            onClearUpcomingQueue = viewModel::clearUpcomingQueue,
-            onCreatePlaylistFromQueue = viewModel::createPlaylistFromQueue,
-            onAddQueueToPlaylist = viewModel::addQueueToPlaylist,
-            onResumeRestoredSession = viewModel::resumeRestoredSession,
-            onDismissRestoredSession = viewModel::dismissRestoredSession,
-            onStartSleepTimer = viewModel::startSleepTimer,
-            onCancelSleepTimer = viewModel::cancelSleepTimer,
-            onToggleFavorite = viewModel::toggleFavorite,
-            onPlayNext = viewModel::playNext,
-            onPlayAtEnd = viewModel::playAtEnd,
-            onCreatePlaylist = viewModel::createPlaylist,
-            onDeletePlaylist = viewModel::deletePlaylist,
-            onSetPlaylistCover = viewModel::setPlaylistCover,
-            onAddSongToPlaylist = viewModel::addSongToPlaylist,
-            onRemoveSongFromPlaylist = viewModel::removeSongFromPlaylist,
-            onTogglePlayPause = viewModel::togglePlayPause,
-            onNext = viewModel::next,
-            onPrevious = viewModel::previous,
-            onSeek = viewModel::seekTo,
-            onPlaybackModeChange = viewModel::setPlaybackMode,
-            onSortModeChange = viewModel::setSortMode,
-            onFolderChange = viewModel::setSelectedFolder,
-            highPerformanceMode = highPerformanceMode,
-            defaultFolderPath = defaultFolderPath,
-            defaultPlaybackMode = defaultPlaybackMode,
-            defaultSortMode = defaultSortMode,
-            fontScale = fontScale,
-            djModeEnabled = djModeEnabled,
-            djMixMode = djMixMode,
-            djMixDurationSeconds = djMixDurationSeconds,
-            autoDjSettings = autoDjSettings,
-            onHighPerformanceModeChange = onHighPerformanceModeChange,
-            onDefaultFolderChange = onDefaultFolderChange,
-            onDefaultPlaybackModeChange = onDefaultPlaybackModeChange,
-            onDefaultSortModeChange = onDefaultSortModeChange,
-            onFontScaleChange = onFontScaleChange,
-            onExcludeSmallAudiosChange = { enabled ->
-                onExcludeSmallAudiosChange(enabled)
-                viewModel.setExcludeSmallAudios(enabled)
-            },
-            onHiddenFolderChange = { folderPath, hidden ->
-                val updated = if (hidden) {
-                    hiddenFolderPaths + folderPath
-                } else {
-                    hiddenFolderPaths - folderPath
-                }
-                onHiddenFolderPathsChange(updated)
-                viewModel.setHiddenFolderPaths(updated)
-            },
-            onDjModeChange = { enabled ->
-                onDjModeChange(enabled)
-                viewModel.setDjModeConfig(enabled, djMixMode, djMixDurationSeconds)
-            },
-            onDjMixModeChange = { mode ->
-                onDjMixModeChange(mode)
-                viewModel.setDjModeConfig(djModeEnabled, mode, djMixDurationSeconds)
-            },
-            onDjMixDurationChange = { seconds ->
-                val safeSeconds = seconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
-                onDjMixDurationChange(safeSeconds)
-                viewModel.setDjModeConfig(djModeEnabled, djMixMode, safeSeconds)
-            },
-            onAutoDjSettingsChange = { settings ->
-                val safeSettings = settings.sanitized()
-                onAutoDjSettingsChange(safeSettings)
-                viewModel.setAutoDjSettings(safeSettings)
-            },
-            onOpenNotificationSettings = onOpenNotificationSettings,
-            onOpenAppSettings = onOpenAppSettings,
-            onOpenDonation = onOpenDonation,
-            onStartWebPanel = viewModel::startWebPanel,
-            onStopWebPanel = viewModel::stopWebPanel,
-            isCheckingForUpdates = isCheckingForUpdates,
-            updateCheckStatus = updateCheckStatus,
-            onCheckForUpdates = onCheckForUpdates,
-            onCloseApp = {
-                viewModel.shutdownPlayback()
-                onCloseApp()
-            },
-        )
+    fun changePlaybackMode(mode: PlaybackMode) {
+        onDefaultPlaybackModeChange(mode)
+        viewModel.setPlaybackMode(mode)
+    }
 
-        if (showNotificationPermissionPrompt) {
-            AlertDialog(
-                onDismissRequest = {
-                    notificationPermissionPromptDismissed = true
-                    showNotificationPermissionPrompt = false
+    val backupPreferences = BackupPreferences(
+        highPerformanceMode = highPerformanceMode,
+        fontScale = fontScale,
+        playbackMode = defaultPlaybackMode,
+        sortMode = defaultSortMode,
+        excludeSmallAudios = excludeSmallAudios,
+        defaultFolderPath = defaultFolderPath,
+        hiddenFolderPaths = hiddenFolderPaths,
+        djModeEnabled = djModeEnabled,
+        djMixMode = djMixMode,
+        djMixDurationSeconds = djMixDurationSeconds,
+        autoDjSettings = autoDjSettings,
+    )
+    val backupActions = BackupUiActions(
+        pendingCount = pendingBackupCount,
+        libraryReady = permissionGranted && defaultsApplied && !uiState.isLoading && !backupBusy,
+        createDocument = { viewModel.createBackupDocument(backupPreferences) },
+        preview = viewModel::previewBackup,
+        restore = viewModel::restoreBackup,
+        previewPending = viewModel::previewPendingBackup,
+        resolvePending = viewModel::resolvePendingBackup,
+    )
+
+    CompositionLocalProvider(LocalBackupActions provides backupActions) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            SoftMusicApp(
+                uiState = uiState,
+                playbackProgressState = viewModel.progressState,
+                hasAudioPermission = permissionGranted,
+                showAudioPermissionRationale = showAudioPermissionRationale,
+                audioPermissionPermanentlyDenied = !permissionGranted && audioPermissionRequested && !showAudioPermissionRationale,
+                hasNotificationPermission = notificationPermissionGranted,
+                onRequestPermission = {
+                    onAudioPermissionRequested()
+                    permissionLauncher.launch(audioPermissionName())
                 },
-                title = { Text("Activa los controles del sistema") },
-                text = {
-                    Text("Permite las notificaciones de SoftMusic para mostrar controles de reproducción en el panel, pantalla de bloqueo y accesorios compatibles.")
+                onRequestNotificationPermission = ::requestNotificationPermission,
+                onRefreshLibrary = viewModel::loadSongs,
+                onPlaySong = viewModel::playSong,
+                onPlayList = viewModel::playVisibleList,
+                onPlayQueuedSong = viewModel::playQueuedSong,
+                onPlayQueue = viewModel::playQueue,
+                onPlayQueueSong = viewModel::playQueueSong,
+                onRemoveFromQueue = viewModel::removeQueuedSong,
+                onMoveQueuedSong = viewModel::moveQueuedSong,
+                onClearUpcomingQueue = viewModel::clearUpcomingQueue,
+                onSmartOrderQueue = viewModel::smartOrderQueue,
+                onCreatePlaylistFromQueue = viewModel::createPlaylistFromQueue,
+                onAddQueueToPlaylist = viewModel::addQueueToPlaylist,
+                onResumeRestoredSession = viewModel::resumeRestoredSession,
+                onDismissRestoredSession = viewModel::dismissRestoredSession,
+                onStartSleepTimer = viewModel::startSleepTimer,
+                onCancelSleepTimer = viewModel::cancelSleepTimer,
+                onToggleFavorite = viewModel::toggleFavorite,
+                onPlayNext = viewModel::playNext,
+                onPlayAtEnd = viewModel::playAtEnd,
+                onCreatePlaylist = viewModel::createPlaylist,
+                onDeletePlaylist = viewModel::deletePlaylist,
+                onSetPlaylistCover = viewModel::setPlaylistCover,
+                onAddSongToPlaylist = viewModel::addSongToPlaylist,
+                onRemoveSongFromPlaylist = viewModel::removeSongFromPlaylist,
+                onRenamePlaylist = viewModel::renamePlaylist,
+                onReorderPlaylist = viewModel::reorderPlaylist,
+                onAddSongsToPlaylist = viewModel::addSongsToPlaylist,
+                onRemoveSongsFromPlaylist = viewModel::removeSongsFromPlaylist,
+                onCyclePlaylistShuffleMode = viewModel::cyclePlaylistShuffleMode,
+                onHistoryEnabledChange = viewModel::setListeningHistoryEnabled,
+                onClearListeningHistory = viewModel::clearListeningHistory,
+                onTogglePlayPause = viewModel::togglePlayPause,
+                onNext = viewModel::next,
+                onPrevious = viewModel::previous,
+                onSeek = viewModel::seekTo,
+                onPlaybackModeChange = ::changePlaybackMode,
+                onSortModeChange = viewModel::setSortMode,
+                onFolderChange = viewModel::setSelectedFolder,
+                highPerformanceMode = highPerformanceMode,
+                defaultFolderPath = defaultFolderPath,
+                defaultPlaybackMode = uiState.playbackMode,
+                defaultSortMode = defaultSortMode,
+                fontScale = fontScale,
+                djModeEnabled = djModeEnabled,
+                djMixMode = djMixMode,
+                djMixDurationSeconds = djMixDurationSeconds,
+                autoDjSettings = autoDjSettings,
+                onHighPerformanceModeChange = onHighPerformanceModeChange,
+                onDefaultFolderChange = onDefaultFolderChange,
+                onDefaultPlaybackModeChange = ::changePlaybackMode,
+                onDefaultSortModeChange = onDefaultSortModeChange,
+                onFontScaleChange = onFontScaleChange,
+                onExcludeSmallAudiosChange = { enabled ->
+                    onExcludeSmallAudiosChange(enabled)
+                    viewModel.setExcludeSmallAudios(enabled)
                 },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            showNotificationPermissionPrompt = false
-                            requestNotificationPermission()
-                        },
-                    ) {
-                        Text("Activar")
+                onHiddenFolderChange = { folderPath, hidden ->
+                    val updated = if (hidden) {
+                        hiddenFolderPaths + folderPath
+                    } else {
+                        hiddenFolderPaths - folderPath
                     }
+                    onHiddenFolderPathsChange(updated)
+                    viewModel.setHiddenFolderPaths(updated)
                 },
-                dismissButton = {
-                    OutlinedButton(
-                        onClick = {
-                            notificationPermissionPromptDismissed = true
-                            showNotificationPermissionPrompt = false
-                        },
-                    ) {
-                        Text("Luego")
-                    }
+                onDjModeChange = { enabled ->
+                    onDjModeChange(enabled)
+                    viewModel.setDjModeConfig(enabled, djMixMode, djMixDurationSeconds)
+                },
+                onDjMixModeChange = { mode ->
+                    onDjMixModeChange(mode)
+                    viewModel.setDjModeConfig(djModeEnabled, mode, djMixDurationSeconds)
+                },
+                onDjMixDurationChange = { seconds ->
+                    val safeSeconds = seconds.coerceIn(MIN_DJ_MIX_SECONDS, MAX_DJ_MIX_SECONDS)
+                    onDjMixDurationChange(safeSeconds)
+                    viewModel.setDjModeConfig(djModeEnabled, djMixMode, safeSeconds)
+                },
+                onAutoDjSettingsChange = { settings ->
+                    val safeSettings = settings.sanitized()
+                    onAutoDjSettingsChange(safeSettings)
+                    viewModel.setAutoDjSettings(safeSettings)
+                },
+                onOpenNotificationSettings = onOpenNotificationSettings,
+                onOpenAppSettings = onOpenAppSettings,
+                onOpenDonation = onOpenDonation,
+                isCheckingForUpdates = isCheckingForUpdates,
+                updateCheckStatus = updateCheckStatus,
+                onCheckForUpdates = onCheckForUpdates,
+                onCloseApp = {
+                    viewModel.shutdownPlayback()
+                    onCloseApp()
                 },
             )
+
+            if (showNotificationPermissionPrompt) {
+                AlertDialog(
+                    onDismissRequest = {
+                        notificationPermissionPromptDismissed = true
+                        showNotificationPermissionPrompt = false
+                    },
+                    title = { Text("Activa los controles del sistema") },
+                    text = {
+                        Text("Permite las notificaciones de SoftMusic para mostrar controles de reproducción en el panel, pantalla de bloqueo y accesorios compatibles.")
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                showNotificationPermissionPrompt = false
+                                requestNotificationPermission()
+                            },
+                        ) {
+                            Text("Activar")
+                        }
+                    },
+                    dismissButton = {
+                        OutlinedButton(
+                            onClick = {
+                                notificationPermissionPromptDismissed = true
+                                showNotificationPermissionPrompt = false
+                            },
+                        ) {
+                            Text("Luego")
+                        }
+                    },
+                )
+            }
         }
     }
 }
 
-private const val THEME_PREFS_NAME = "theme_settings"
+private const val KEY_BACKUP_PREFERENCES_REVISION = "backup_preferences_revision"
 private const val KEY_LEGACY_THEME_MODE = "theme_mode"
 private const val KEY_LEGACY_COLOR_PALETTE = "color_palette"
 private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"

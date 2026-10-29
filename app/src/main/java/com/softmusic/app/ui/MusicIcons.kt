@@ -151,6 +151,12 @@ internal object MusicIcons {
     val PreviousSelected: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_previous_selected)
 
+    val Recent: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_recent_normal)
+
+    val RecentSelected: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_recent_selected)
+
     val Queue: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_queue_normal)
 
@@ -192,6 +198,19 @@ internal object MusicIcons {
 
     val ShuffleSelected: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_shuffle_selected)
+
+    // Compose uses a fixed dark theme even when Android resolves daytime resources.
+    val SmartShuffle: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_action_smart_shuffle_normal_dark)
+
+    val SmartShuffleSelected: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_action_smart_shuffle_selected)
+
+    val SmartSort: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_action_smart_sort_normal_dark)
+
+    val SmartSortSelected: ImageVector
+        @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_action_smart_sort_selected)
 
     val SleepTimer: ImageVector
         @Composable get() = ImageVector.vectorResource(R.drawable.ic_sm_sleep_timer_normal)

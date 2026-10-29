@@ -9,6 +9,15 @@ import kotlin.test.assertTrue
 
 class PlaybackQueueOriginTest {
     @Test
+    fun `history playback keeps its actual source label across saved keys`() {
+        val history = PlayerUiState(playbackQueueSource = PlaybackQueueSource.History)
+        assertEquals("Historial", history.playbackQueueOriginLabel())
+        assertEquals("Escuchadas recientemente", history.copy(playbackQueueSourceKey = "recent").playbackQueueOriginLabel())
+        assertEquals("Más reproducidas", history.copy(playbackQueueSourceKey = "most_played").playbackQueueOriginLabel())
+        assertEquals(PlaybackQueueSource.History, enumValueOf<PlaybackQueueSource>("History"))
+    }
+
+    @Test
     fun `saved queue origin can be recovered for the exact running timeline and current song`() {
         assertTrue(
             playbackQueueOriginMatchesTimeline(listOf(8L, 3L, 5L), 3L, listOf("8", "3", "5"), "3"),
